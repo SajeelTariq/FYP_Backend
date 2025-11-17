@@ -1,21 +1,12 @@
 """
-RAG API Views for querying the knowledge base.
+RAG API Views for querying the knowledge base with ChromaDB.
 """
-from rest_framework import viewsets, status
-from rest_framework.decorators import api_view, permission_classes, action
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from django.views.decorators.csrf import csrf_exempt
-from django.db.models import Count, Avg
 
-from .rag_service import RAGService
-from .rag_models import RAGQuery, DocumentChunk
-from .models import VectorDocument, QueryLog
-from .serializers import (
-    VectorDocumentSerializer, 
-    QueryLogSerializer,
-    QueryRequestSerializer
-)
+from .rag_service_chromadb import RAGServiceChroma
 
 
 class VectorDocumentViewSet(viewsets.ReadOnlyModelViewSet):
