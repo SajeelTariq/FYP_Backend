@@ -164,6 +164,52 @@ class CompetitorViewSet(viewsets.ModelViewSet):
                 'created': True
             }, status=status.HTTP_201_CREATED)
     
+    def update(self, request, *args, **kwargs):
+        """Update competitor information (PUT request - full update)."""
+        competitor = self.get_object()
+        serializer = CompetitorCreateUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        data = serializer.validated_data
+        
+        # Update all fields
+        competitor.name = data['name']
+        competitor.website_base_url = data.get('website_base_url') or None
+        competitor.linkedin_url = data.get('linkedin_url') or None
+        competitor.facebook_url = data.get('facebook_url') or None
+        competitor.instagram_url = data.get('instagram_url') or None
+        competitor.twitter_url = data.get('twitter_url') or None
+        competitor.save()
+        
+        return Response({
+            'message': 'Competitor updated successfully',
+            'competitor': CompetitorSerializer(competitor).data
+        }, status=status.HTTP_200_OK)
+    
+    def partial_update(self, request, *args, **kwargs):
+        """Partially update competitor information (PATCH request - partial update)."""
+        competitor = self.get_object()
+        
+        # Get the fields that are provided in the request
+        allowed_fields = ['name', 'website_base_url', 'linkedin_url', 'facebook_url', 'instagram_url', 'twitter_url']
+        update_data = {key: value for key, value in request.data.items() if key in allowed_fields}
+        
+        if not update_data:
+            return Response({
+                'error': 'No valid fields provided for update'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Update only the provided fields
+        for field, value in update_data.items():
+            setattr(competitor, field, value if value else None)
+        
+        competitor.save()
+        
+        return Response({
+            'message': 'Competitor updated successfully',
+            'competitor': CompetitorSerializer(competitor).data
+        }, status=status.HTTP_200_OK)
+    
     def destroy(self, request, *args, **kwargs):
         """Soft delete competitor."""
         competitor = self.get_object()

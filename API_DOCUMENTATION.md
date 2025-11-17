@@ -99,11 +99,89 @@ Content-Type: application/json
 
 ## Competitor Management Endpoints
 
-### 1. Add/Update Competitor
+### 1. List All Competitors
+
+**GET** `/api/monitoring/competitors/`
+
+**Headers:** `Authorization: Token <token>`
+
+**Description:** Retrieve all competitors for the authenticated user (excludes soft-deleted competitors).
+
+**Response (200 OK):**
+
+```json
+[
+  {
+    "id": 1,
+    "name": "Tech Startup Inc",
+    "website_base_url": "https://techstartup.com",
+    "linkedin_url": "https://linkedin.com/company/techstartup",
+    "facebook_url": "https://facebook.com/techstartup",
+    "instagram_url": "https://instagram.com/techstartup",
+    "twitter_url": "https://twitter.com/techstartup",
+    "is_deleted": false,
+    "created_at": "2025-11-16T10:00:00Z",
+    "updated_at": "2025-11-16T10:00:00Z"
+  },
+  {
+    "id": 2,
+    "name": "Competitor B",
+    "website_base_url": null,
+    "linkedin_url": "https://linkedin.com/company/competitorb",
+    "facebook_url": "https://facebook.com/competitorb",
+    "instagram_url": null,
+    "twitter_url": null,
+    "is_deleted": false,
+    "created_at": "2025-11-17T11:00:00Z",
+    "updated_at": "2025-11-17T11:00:00Z"
+  }
+]
+```
+
+---
+
+### 2. Get Single Competitor
+
+**GET** `/api/monitoring/competitors/{id}/`
+
+**Headers:** `Authorization: Token <token>`
+
+**Description:** Retrieve detailed information about a specific competitor.
+
+**Response (200 OK):**
+
+```json
+{
+  "id": 1,
+  "name": "Tech Startup Inc",
+  "website_base_url": "https://techstartup.com",
+  "linkedin_url": "https://linkedin.com/company/techstartup",
+  "facebook_url": "https://facebook.com/techstartup",
+  "instagram_url": "https://instagram.com/techstartup",
+  "twitter_url": "https://twitter.com/techstartup",
+  "is_deleted": false,
+  "created_at": "2025-11-16T10:00:00Z",
+  "updated_at": "2025-11-16T10:00:00Z"
+}
+```
+
+**Response (404 Not Found):**
+
+```json
+{
+  "detail": "Not found."
+}
+```
+
+---
+
+### 3. Create Competitor
 
 **POST** `/api/monitoring/competitors/`
 
 **Headers:** `Authorization: Token <token>`
+
+**Description:** Create a new competitor or update existing one if URLs match.
 
 **Request Body:**
 
@@ -118,7 +196,7 @@ Content-Type: application/json
 }
 ```
 
-**Note:** At least one URL is required. You can provide any combination of URLs.
+**Note:** At least one URL is required. Empty strings or missing fields are treated as null.
 
 **Response (201 Created) - New Competitor:**
 
@@ -145,92 +223,146 @@ Content-Type: application/json
 
 ```json
 {
-    "message": "Competitor updated successfully",
-    "competitor": { ... },
-    "created": false
+  "message": "Competitor updated successfully",
+  "competitor": {
+    "id": 1,
+    "name": "Tech Startup Inc",
+    "website_base_url": "https://techstartup.com",
+    "linkedin_url": "https://linkedin.com/company/techstartup",
+    "facebook_url": null,
+    "instagram_url": null,
+    "twitter_url": null,
+    "is_deleted": false,
+    "created_at": "2025-11-16T10:00:00Z",
+    "updated_at": "2025-11-16T10:35:00Z"
+  },
+  "created": false
+}
+```
+
+**Response (400 Bad Request):**
+
+```json
+{
+  "name": ["This field is required."]
 }
 ```
 
 ---
 
-### 2. List All Competitors
+### 4. Full Update Competitor
 
-**GET** `/api/monitoring/competitors/`
-
-**Headers:** `Authorization: Token <token>`
-
-**Response (200 OK):**
-
-```json
-{
-  "count": 2,
-  "next": null,
-  "previous": null,
-  "results": [
-    {
-      "id": 1,
-      "name": "Tech Startup Inc",
-      "website_base_url": "https://techstartup.com",
-      "linkedin_url": "https://linkedin.com/company/techstartup",
-      "facebook_url": "https://facebook.com/techstartup",
-      "instagram_url": "https://instagram.com/techstartup",
-      "twitter_url": "https://twitter.com/techstartup",
-      "is_deleted": false,
-      "created_at": "2025-11-16T10:00:00Z",
-      "updated_at": "2025-11-16T10:00:00Z"
-    }
-  ]
-}
-```
-
----
-
-### 3. Get Single Competitor
-
-**GET** `/api/monitoring/competitors/{id}/`
+**PUT** `/api/monitoring/competitors/{id}/`
 
 **Headers:** `Authorization: Token <token>`
 
-**Response (200 OK):**
+**Description:** Completely replace competitor information. All fields must be provided.
+
+**Request Body:**
 
 ```json
 {
-  "id": 1,
-  "name": "Tech Startup Inc",
-  "website_base_url": "https://techstartup.com",
+  "name": "Updated Tech Startup Inc",
+  "website_base_url": "https://new-techstartup.com",
   "linkedin_url": "https://linkedin.com/company/techstartup",
   "facebook_url": "https://facebook.com/techstartup",
   "instagram_url": "https://instagram.com/techstartup",
-  "twitter_url": "https://twitter.com/techstartup",
-  "is_deleted": false,
-  "created_at": "2025-11-16T10:00:00Z",
-  "updated_at": "2025-11-16T10:00:00Z"
+  "twitter_url": "https://twitter.com/techstartup"
 }
 ```
 
----
-
-### 4. Update Competitor
-
-**PUT/PATCH** `/api/monitoring/competitors/{id}/`
-
-**Headers:** `Authorization: Token <token>`
-
-**Request Body (PATCH - partial update):**
+**Response (200 OK):**
 
 ```json
 {
-  "facebook_url": "https://facebook.com/newtechstartup"
+  "message": "Competitor updated successfully",
+  "competitor": {
+    "id": 1,
+    "name": "Updated Tech Startup Inc",
+    "website_base_url": "https://new-techstartup.com",
+    "linkedin_url": "https://linkedin.com/company/techstartup",
+    "facebook_url": "https://facebook.com/techstartup",
+    "instagram_url": "https://instagram.com/techstartup",
+    "twitter_url": "https://twitter.com/techstartup",
+    "is_deleted": false,
+    "created_at": "2025-11-16T10:00:00Z",
+    "updated_at": "2025-11-17T12:00:00Z"
+  }
 }
 ```
 
 ---
 
-### 5. Delete Competitor (Soft Delete)
+### 5. Partial Update Competitor
+
+**PATCH** `/api/monitoring/competitors/{id}/`
+
+**Headers:** `Authorization: Token <token>`
+
+**Description:** Update only specific fields of a competitor. Only provide the fields you want to change.
+
+**Request Example 1 - Add LinkedIn URL:**
+
+```json
+{
+  "linkedin_url": "https://linkedin.com/company/techstartup"
+}
+```
+
+**Request Example 2 - Update Name and Add Instagram:**
+
+```json
+{
+  "name": "Tech Startup Inc Updated",
+  "instagram_url": "https://instagram.com/techstartup"
+}
+```
+
+**Request Example 3 - Remove URL (set to null):**
+
+```json
+{
+  "facebook_url": ""
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "message": "Competitor updated successfully",
+  "competitor": {
+    "id": 1,
+    "name": "Tech Startup Inc Updated",
+    "website_base_url": "https://techstartup.com",
+    "linkedin_url": "https://linkedin.com/company/techstartup",
+    "facebook_url": null,
+    "instagram_url": "https://instagram.com/techstartup",
+    "twitter_url": null,
+    "is_deleted": false,
+    "created_at": "2025-11-16T10:00:00Z",
+    "updated_at": "2025-11-17T12:15:00Z"
+  }
+}
+```
+
+**Response (400 Bad Request):**
+
+```json
+{
+  "error": "No valid fields provided for update"
+}
+```
+
+---
+
+### 6. Delete Competitor (Soft Delete)
 
 **DELETE** `/api/monitoring/competitors/{id}/`
 
 **Headers:** `Authorization: Token <token>`
+
+**Description:** Soft delete a competitor (sets `is_deleted=True` and `deleted_at` timestamp).
 
 **Response (200 OK):**
 
@@ -238,6 +370,83 @@ Content-Type: application/json
 {
   "message": "Competitor deleted successfully"
 }
+```
+
+**Response (404 Not Found):**
+
+```json
+{
+  "detail": "Not found."
+}
+```
+
+---
+
+### Frontend Implementation Example
+
+```javascript
+// Fetch all competitors
+const fetchCompetitors = async () => {
+  const response = await fetch(
+    "http://localhost:8000/api/monitoring/competitors/",
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Token ${userToken}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return await response.json();
+};
+
+// Edit competitor (partial update - only changed fields)
+const editCompetitor = async (competitorId, updatedFields) => {
+  const response = await fetch(
+    `http://localhost:8000/api/monitoring/competitors/${competitorId}/`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Token ${userToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(updatedFields),
+    }
+  );
+  return await response.json();
+};
+
+// Delete competitor
+const deleteCompetitor = async (competitorId) => {
+  const response = await fetch(
+    `http://localhost:8000/api/monitoring/competitors/${competitorId}/`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Token ${userToken}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return await response.json();
+};
+
+// Example usage
+(async () => {
+  // Get all competitors
+  const competitors = await fetchCompetitors();
+  console.log("All Competitors:", competitors);
+
+  // Edit a competitor (add LinkedIn URL)
+  const updated = await editCompetitor(1, {
+    linkedin_url: "https://linkedin.com/company/newurl",
+  });
+  console.log("Updated:", updated);
+
+  // Delete a competitor
+  const deleted = await deleteCompetitor(2);
+  console.log("Deleted:", deleted);
+})();
 ```
 
 ---
