@@ -1,0 +1,268 @@
+// Use DBML to define your database structure
+// Updated based on actual Django implementation
+// Docs: https://dbml.dbdiagram.io/docs
+
+// --- Django Auth User Table (Built-in) ---
+Table auth_user {
+  id integer [pk, increment, note: 'Primary Key (Django default)']
+  username varchar(150) [unique, not null]
+  email varchar(254) [unique]
+  password varchar(128) [not null, note: 'Hashed password']
+  first_name varchar(150)
+  last_name varchar(150)
+  is_staff boolean [default: false]
+  is_active boolean [default: true]
+  is_superuser boolean [default: false]
+  last_login timestamptz
+  date_joined timestamptz [not null]
+}
+
+// --- Competitors Table ---
+Table monitoring_competitor {
+  id integer [pk, increment, note: 'Primary Key (AutoField)']
+  user_id integer [not null, note: 'References auth_user.id']
+  name varchar(255) [not null, note: 'Competitor display name']
+  website_base_url varchar [null, note: 'Base website URL']
+  linkedin_url varchar [null]
+  facebook_url varchar [null]
+  instagram_url varchar [null]
+  twitter_url varchar [null]
+  is_deleted boolean [default: false, note: 'Soft delete flag']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  deleted_at timestamptz [null, note: 'Timestamp when soft deleted']
+  
+  indexes {
+    (user_id, is_deleted) [name: 'idx_user_is_deleted']
+    (website_base_url) [name: 'idx_website_url']
+  }
+  
+  Note: 'Unique together: (user_id, website_base_url)'
+}
+
+// --- Monitoring Tasks Table ---
+Table monitoring_task {
+  id integer [pk, increment]
+  competitor_id integer [not null, note: 'References monitoring_competitor.id']
+  created_by_id integer [null, note: 'References auth_user.id']
+  task_type varchar(50) [not null, note: 'e.g., scrape, analyze']
+  status varchar(20) [default: 'pending', note: 'pending, running, completed, failed']
+  scheduled_at timestamptz [not null]
+  started_at timestamptz [null]
+  completed_at timestamptz [null]
+  error_message text
+  
+  indexes {
+    (scheduled_at) [name: 'idx_scheduled_at']
+  }
+}
+
+// --- Extracted Links Table ---
+Table monitoring_extracted_links {
+  id integer [pk, increment]
+  competitor_id integer [not null, note: 'References monitoring_competitor.id']
+  links jsonb [not null, note: 'Array of extracted URLs']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  
+  indexes {
+    (created_at) [name: 'idx_extracted_created_at']
+  }
+}
+
+// --- Filtered Links Table ---
+Table monitoring_filtered_links {
+  id integer [pk, increment]
+  competitor_id integer [not null, note: 'References monitoring_competitor.id']
+  links jsonb [not null, note: 'Array of filtered URLs']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  
+  indexes {
+    (created_at) [name: 'idx_filtered_created_at']
+  }
+}
+
+// --- Daily Scraper Links Table ---
+Table monitoring_daily_scraper_links {
+  id integer [pk, increment]
+  competitor_id integer [not null, note: 'References monitoring_competitor.id']
+  links jsonb [not null, note: 'Array of URLs to scrape daily']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  
+  indexes {
+    (created_at) [name: 'idx_daily_created_at']
+  }
+}
+
+// --- Competitor HTML Table ---
+Table monitoring_competitor_html {
+  id integer [pk, increment]
+  competitor_id integer [not null, note: 'References monitoring_competitor.id']
+  url varchar [not null]
+  html_content text [not null, note: 'Raw HTML content']
+  scraped_at timestamptz [not null]
+  
+  indexes {
+    (competitor_id, scraped_at) [name: 'idx_competitor_scraped']
+    (url) [name: 'idx_html_url']
+  }
+}
+
+// --- Competitor Metadata Table (for RAG) ---
+Table monitoring_competitor_metadata {
+  id integer [pk, increment]
+  competitor_id integer [not null, note: 'References monitoring_competitor.id']
+  url varchar [not null]
+  metadata jsonb [not null, note: 'Extracted metadata for RAG']
+  extracted_at timestamptz [not null]
+  
+  indexes {
+    (competitor_id, extracted_at) [name: 'idx_metadata_extracted']
+  }
+}
+
+// --- RAG Document Chunks Table ---
+Table rag_document_chunk {
+  id integer [pk, increment]
+  source_file varchar(500) [not null]
+  competitor_name varchar(100) [not null, note: 'Denormalized for faster filtering']
+  url varchar(1000) [not null]
+  title varchar(500)
+  chunk_text text [not null, note: 'Text chunk for retrieval']
+  chunk_index integer [default: 0]
+  chunk_size integer [not null, note: 'Character count']
+  embedding float[] [not null, note: '384-dimensional vector (PostgreSQL array)']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  
+  indexes {
+    (competitor_name, created_at) [name: 'idx_chunk_competitor']
+    (source_file) [name: 'idx_chunk_source']
+  }
+}
+
+// --- RAG Query Log Table ---
+Table rag_query {
+  id integer [pk, increment]
+  query_text text [not null]
+  retrieved_chunks jsonb [not null, note: 'Array of chunk IDs and similarity scores']
+  generated_answer text
+  retrieval_time float [not null, note: 'Time in seconds']
+  generation_time float [not null, note: 'Time in seconds']
+  total_time float [not null, note: 'Time in seconds']
+  top_k integer [default: 5]
+  model_used varchar(100) [default: 'gpt-4o-mini']
+  created_at timestamptz [not null]
+  
+  indexes {
+    (created_at) [name: 'idx_query_created']
+  }
+}
+
+// --- Scraping Configuration Table ---
+Table scraping_config {
+  id integer [pk, increment]
+  competitor_id integer [not null, note: 'References monitoring_competitor.id']
+  target_url varchar [not null]
+  scraping_frequency varchar(20) [default: 'daily', note: 'hourly, daily, weekly']
+  selectors jsonb [not null, note: 'CSS selectors for scraping']
+  headers jsonb [not null, note: 'HTTP headers']
+  is_active boolean [default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  
+  indexes {
+    (created_at) [name: 'idx_config_created']
+  }
+}
+
+// --- Scraping Log Table ---
+Table scraping_log {
+  id integer [pk, increment]
+  config_id integer [not null, note: 'References scraping_config.id']
+  status varchar(20) [not null, note: 'success, failed, partial']
+  items_scraped integer [default: 0]
+  error_message text
+  execution_time float [not null, note: 'Seconds']
+  started_at timestamptz [not null]
+  completed_at timestamptz [not null]
+  
+  indexes {
+    (completed_at) [name: 'idx_log_completed']
+  }
+}
+
+// --- Competitor Metrics Table ---
+Table analytics_competitor_metrics {
+  id integer [pk, increment]
+  competitor_id integer [not null, note: 'References monitoring_competitor.id']
+  metric_type varchar(50) [not null, note: 'e.g., price_change, content_update']
+  metric_value float [not null]
+  metric_metadata jsonb
+  date date [not null]
+  created_at timestamptz [not null]
+  
+  indexes {
+    (competitor_id, metric_type, date) [name: 'idx_metrics_comp_type_date']
+  }
+}
+
+// --- Trend Analysis Table ---
+Table analytics_trend_analysis {
+  id integer [pk, increment]
+  competitor_id integer [not null, note: 'References monitoring_competitor.id']
+  trend_type varchar(50) [not null]
+  trend_direction varchar(20) [not null, note: 'up, down, stable']
+  confidence_score float [not null, note: '0.0 to 1.0']
+  analysis_data jsonb [not null]
+  period_start date [not null]
+  period_end date [not null]
+  created_at timestamptz [not null]
+  
+  indexes {
+    (created_at) [name: 'idx_trend_created']
+  }
+}
+
+// --- Relationships ---
+
+// User → Competitors (One-to-Many)
+Ref: monitoring_competitor.user_id > auth_user.id [delete: cascade]
+
+// User → Monitoring Tasks (One-to-Many, nullable)
+Ref: monitoring_task.created_by_id > auth_user.id [delete: set null]
+
+// Competitor → Monitoring Tasks (One-to-Many)
+Ref: monitoring_task.competitor_id > monitoring_competitor.id [delete: cascade]
+
+// Competitor → Extracted Links (One-to-Many)
+Ref: monitoring_extracted_links.competitor_id > monitoring_competitor.id [delete: cascade]
+
+// Competitor → Filtered Links (One-to-Many)
+Ref: monitoring_filtered_links.competitor_id > monitoring_competitor.id [delete: cascade]
+
+// Competitor → Daily Scraper Links (One-to-Many)
+Ref: monitoring_daily_scraper_links.competitor_id > monitoring_competitor.id [delete: cascade]
+
+// Competitor → HTML Content (One-to-Many)
+Ref: monitoring_competitor_html.competitor_id > monitoring_competitor.id [delete: cascade]
+
+// Competitor → Metadata (One-to-Many)
+Ref: monitoring_competitor_metadata.competitor_id > monitoring_competitor.id [delete: cascade]
+
+// Competitor → Scraping Configs (One-to-Many)
+Ref: scraping_config.competitor_id > monitoring_competitor.id [delete: cascade]
+
+// Scraping Config → Logs (One-to-Many)
+Ref: scraping_log.config_id > scraping_config.id [delete: cascade]
+
+// Competitor → Metrics (One-to-Many)
+Ref: analytics_competitor_metrics.competitor_id > monitoring_competitor.id [delete: cascade]
+
+// Competitor → Trends (One-to-Many)
+Ref: analytics_trend_analysis.competitor_id > monitoring_competitor.id [delete: cascade]
+
+// Note: RAG tables (rag_document_chunk, rag_query) are standalone
+// They use competitor_name as a string field (denormalized) for better query performance
