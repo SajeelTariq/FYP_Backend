@@ -14,6 +14,7 @@ from django.conf import settings
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 from rank_bm25 import BM25Okapi
+from difflib import SequenceMatcher
 
 
 class RAGServiceChroma:
@@ -23,8 +24,8 @@ class RAGServiceChroma:
         """Initialize ChromaDB client and embedding model."""
         # Initialize embedding model
         self.embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-        self.chunk_size = 500  # characters
-        self.chunk_overlap = 50  # characters
+        self.chunk_size = 1500  # characters
+        self.chunk_overlap = 150  # characters
         
         # Initialize ChromaDB persistent client
         chroma_db_path = os.path.join(settings.BASE_DIR, 'chroma_db')
@@ -90,7 +91,7 @@ class RAGServiceChroma:
     
     def ingest_json_file(self, filepath: str, competitor_name: str) -> int:
         """
-        Ingest a single JSON file into ChromaDB.
+        Ingest a single JSON file into ChromaDB (legacy method, no deduplication).
         
         Args:
             filepath: Path to JSON file
@@ -98,6 +99,28 @@ class RAGServiceChroma:
             
         Returns:
             Number of chunks created
+        """
+        result = self._ingest_json_file_deduplicated(filepath, competitor_name, '', [])
+        return result['added']
+    
+    def _ingest_json_file_deduplicated(
+        self, 
+        filepath: str, 
+        competitor_name: str,
+        base_url: str,
+        existing_chunks: List[str]
+    ) -> Dict[str, int]:
+        """
+        Ingest a single JSON file with deduplication.
+        
+        Args:
+            filepath: Path to JSON file
+            competitor_name: Name of competitor
+            base_url: Normalized base URL for grouping
+            existing_chunks: List of existing chunk texts for this base URL
+            
+        Returns:
+            Dict with 'added' and 'duplicates' counts
         """
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
@@ -129,8 +152,7 @@ class RAGServiceChroma:
                 title = url
             
             if not content or len(content.strip()) < 50:
-                print(f"Skipping {filepath}: Content too short")
-                return 0
+                return {'added': 0, 'duplicates': 0}
             
             # Chunk the content
             chunks = self.chunk_text(content)
@@ -140,10 +162,19 @@ class RAGServiceChroma:
             embeddings = []
             documents = []
             metadatas = []
+            duplicates = 0
             
             for idx, chunk_text in enumerate(chunks):
+                # Check for duplicates
+                if self._is_duplicate_chunk(chunk_text, existing_chunks, threshold=0.85):
+                    duplicates += 1
+                    continue
+                
+                # Add to existing chunks for future comparison
+                existing_chunks.append(chunk_text)
+                
                 # Generate unique ID
-                chunk_id = f"{competitor_name}_{os.path.basename(filepath)}_{idx}"
+                chunk_id = f"{competitor_name}_{os.path.basename(filepath)}_{idx}_{int(time.time() * 1000)}"
                 
                 # Generate embedding
                 embedding = self.generate_embedding(chunk_text)
@@ -155,7 +186,8 @@ class RAGServiceChroma:
                     "url": url,
                     "title": title,
                     "chunk_index": idx,
-                    "chunk_size": len(chunk_text)
+                    "chunk_size": len(chunk_text),
+                    "base_url": base_url
                 }
                 
                 chunk_ids.append(chunk_id)
@@ -172,15 +204,33 @@ class RAGServiceChroma:
                     metadatas=metadatas
                 )
             
-            return len(chunks)
+            return {'added': len(chunk_ids), 'duplicates': duplicates}
             
         except Exception as e:
             print(f"Error ingesting {filepath}: {str(e)}")
-            return 0
+            return {'added': 0, 'duplicates': 0}
+    
+    def _normalize_url(self, url: str) -> str:
+        """Normalize URL to base form for deduplication."""
+        # Remove common suffixes and parameters
+        url = url.lower()
+        # Remove .php, _feed, query params
+        url = url.split('?')[0].split('#')[0]
+        url = url.replace('.php', '').replace('_feed', '').replace('-php', '')
+        return url.strip('/')
+    
+    def _is_duplicate_chunk(self, chunk_text: str, existing_chunks: List[str], threshold: float = 0.85) -> bool:
+        """Check if chunk is duplicate of existing chunks."""
+        for existing in existing_chunks:
+            # Use SequenceMatcher to calculate similarity
+            similarity = SequenceMatcher(None, chunk_text.lower(), existing.lower()).ratio()
+            if similarity >= threshold:
+                return True
+        return False
     
     def ingest_all_data(self, data_dir: Optional[str] = None) -> Dict[str, int]:
         """
-        Ingest all JSON files from data directory.
+        Ingest all JSON files from data directory with deduplication.
         
         Args:
             data_dir: Path to data directory (default: BASE_DIR/data)
@@ -192,7 +242,11 @@ class RAGServiceChroma:
             data_dir = os.path.join(settings.BASE_DIR, 'data')
         
         # Clear existing collection
-        self.client.delete_collection("competitor_documents")
+        try:
+            self.client.delete_collection("competitor_documents")
+        except:
+            pass  # Collection might not exist
+        
         self.collection = self.client.get_or_create_collection(
             name="competitor_documents",
             metadata={"hnsw:space": "cosine"}
@@ -207,6 +261,9 @@ class RAGServiceChroma:
             'kia': 'kia-luckymotorcorp'
         }
         
+        # Track chunks by base URL for deduplication
+        url_chunks_map = {}  # base_url -> list of chunk texts
+        
         for competitor_name, folder_name in competitor_folders.items():
             folder_path = os.path.join(data_dir, folder_name)
             
@@ -214,17 +271,36 @@ class RAGServiceChroma:
                 print(f"Folder not found: {folder_path}")
                 continue
             
-            total_chunks = 0
             json_files = list(Path(folder_path).glob('*.json'))
-            
             print(f"\nProcessing {competitor_name} ({len(json_files)} files)...")
             
+            # First pass: Group files by base URL
+            url_files_map = {}
             for json_file in json_files:
-                chunks = self.ingest_json_file(str(json_file), competitor_name)
-                total_chunks += chunks
+                base_url = self._normalize_url(str(json_file.stem))
+                if base_url not in url_files_map:
+                    url_files_map[base_url] = []
+                url_files_map[base_url].append(json_file)
+            
+            total_chunks = 0
+            total_duplicates = 0
+            
+            # Second pass: Process files with deduplication
+            for base_url, files in url_files_map.items():
+                url_chunks_map[base_url] = []
+                
+                for json_file in files:
+                    chunks = self._ingest_json_file_deduplicated(
+                        str(json_file), 
+                        competitor_name, 
+                        base_url,
+                        url_chunks_map[base_url]
+                    )
+                    total_chunks += chunks['added']
+                    total_duplicates += chunks['duplicates']
             
             stats[competitor_name] = total_chunks
-            print(f"✓ {competitor_name}: {total_chunks} chunks")
+            print(f"✓ {competitor_name}: {total_chunks} chunks (removed {total_duplicates} duplicates)")
         
         # Rebuild BM25 index after ingestion
         self._build_bm25_index()
@@ -320,19 +396,21 @@ class RAGServiceChroma:
         k = 60  # RRF constant
         fusion_scores = {}
         
-        # Add dense results
+        # Add dense results (semantic gets higher weight: 2.5x)
         if dense_results['ids'] and len(dense_results['ids'][0]) > 0:
             for rank, (doc_id, distance) in enumerate(zip(dense_results['ids'][0], dense_results['distances'][0])):
                 # Convert distance to similarity (ChromaDB returns distances)
                 similarity = 1 / (1 + distance)
-                fusion_scores[doc_id] = fusion_scores.get(doc_id, 0) + 1 / (k + rank + 1)
+                # Semantic search weighted 2.5x higher for better semantic understanding
+                fusion_scores[doc_id] = fusion_scores.get(doc_id, 0) + (2.5 / (k + rank + 1))
         
-        # Add BM25 results
+        # Add BM25 results (keyword gets standard weight: 1.0x)
         all_ids = self.collection.get(include=['metadatas'])['ids']
         for rank, idx in enumerate(top_bm25_indices):
             if idx < len(all_ids):
                 doc_id = all_ids[idx]
-                fusion_scores[doc_id] = fusion_scores.get(doc_id, 0) + 1 / (k + rank + 1)
+                # BM25 keyword matching weighted 1.0x
+                fusion_scores[doc_id] = fusion_scores.get(doc_id, 0) + (1.0 / (k + rank + 1))
         
         # Sort by fusion score
         sorted_results = sorted(fusion_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
@@ -375,23 +453,30 @@ class RAGServiceChroma:
         Returns:
             Generated answer
         """
-        # Prepare context
+        # Prepare context (show full chunks for better accuracy)
         context = "\n\n".join([
+            f"[Document {i+1}]\n"
             f"Source: {chunk['metadata'].get('title', 'Unknown')}\n"
             f"URL: {chunk['metadata'].get('url', 'N/A')}\n"
-            f"Content: {chunk['text'][:500]}..."
-            for chunk in context_chunks[:5]  # Use top 5 chunks
+            f"Content:\n{chunk['text']}"
+            for i, chunk in enumerate(context_chunks[:5])  # Use top 5 chunks
         ])
         
         # Prepare prompt
-        prompt = f"""You are a helpful assistant that answers questions about automotive competitors based on provided context.
+        prompt = f"""You are a helpful assistant that answers questions based on the provided context documents.
 
 Context:
 {context}
 
 Question: {query}
 
-Please provide a comprehensive answer based on the context above. If the context doesn't contain enough information, say so clearly."""
+Instructions:
+- Provide a comprehensive and accurate answer based ONLY on the context above
+- If the context contains relevant information, synthesize it into a clear answer
+- If the context lacks sufficient information to answer the question, clearly state that
+- Cite which document(s) support your answer when possible
+
+Answer:"""
 
         # Call OpenRouter API
         api_key = settings.OPENROUTER_API_KEY
