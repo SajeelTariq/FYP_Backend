@@ -17,7 +17,7 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-change-this-in-prod
 # Firecrawl API Configuration
 FIRECRAWL_API_KEY = os.getenv('FIRECRAWL_API_KEY', '')
 
-# OpenRouter API Configuration
+# OpenRouter API Configuration (used by Agno agents)
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
 
 # SECURITY WARNING: don't run with debug turned on in production!
@@ -136,7 +136,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # CORS Settings
 CORS_ALLOWED_ORIGINS = os.getenv(
     'CORS_ALLOWED_ORIGINS',
-    'http://localhost:3000,http://localhost:5173'
+    'http://localhost:1500,http://127.0.0.1:1500'
 ).split(',')
 
 CORS_ALLOW_CREDENTIALS = True

@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from .models import (
     Competitor, MonitoringTask, ExtractedLinks, 
-    FilteredLinks, DailyScraperLinks, CompetitorHTML, CompetitorMetadata
+    FilteredLinks, DailyScraperLinks, CompetitorHTML, CompetitorMetadata,
+    HTMLSnapshot, HTMLDifference
 )
 from django.contrib.auth.models import User
 
@@ -136,3 +137,26 @@ class CompetitorMetadataSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompetitorMetadata
         fields = '__all__'
+
+
+class HTMLSnapshotSerializer(serializers.ModelSerializer):
+    competitor_name = serializers.CharField(source='competitor.name', read_only=True)
+    html_size = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = HTMLSnapshot
+        fields = ['id', 'competitor', 'competitor_name', 'url', 'content_hash', 'html_size', 'snapshot_at']
+    
+    def get_html_size(self, obj):
+        return len(obj.html_content) if obj.html_content else 0
+
+
+class HTMLDifferenceSerializer(serializers.ModelSerializer):
+    competitor_name = serializers.CharField(source='competitor.name', read_only=True)
+    old_snapshot_time = serializers.DateTimeField(source='old_snapshot.snapshot_at', read_only=True, allow_null=True)
+    new_snapshot_time = serializers.DateTimeField(source='new_snapshot.snapshot_at', read_only=True)
+    
+    class Meta:
+        model = HTMLDifference
+        fields = '__all__'
+

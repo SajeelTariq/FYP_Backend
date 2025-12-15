@@ -1,7 +1,8 @@
 from django.contrib import admin
 from .models import (
     Competitor, MonitoringTask, ExtractedLinks, 
-    FilteredLinks, DailyScraperLinks, CompetitorHTML, CompetitorMetadata
+    FilteredLinks, DailyScraperLinks, CompetitorHTML, CompetitorMetadata,
+    HTMLSnapshot, HTMLDifference
 )
 
 
@@ -74,3 +75,42 @@ class CompetitorMetadataAdmin(admin.ModelAdmin):
     list_display = ['competitor', 'url', 'extracted_at']
     list_filter = ['extracted_at']
     search_fields = ['competitor__name', 'url']
+
+
+@admin.register(HTMLSnapshot)
+class HTMLSnapshotAdmin(admin.ModelAdmin):
+    list_display = ['competitor', 'url', 'content_hash_short', 'html_size', 'snapshot_at']
+    list_filter = ['snapshot_at', 'competitor']
+    search_fields = ['competitor__name', 'url', 'content_hash']
+    readonly_fields = ['snapshot_at', 'content_hash']
+    
+    def content_hash_short(self, obj):
+        return obj.content_hash[:16] + '...' if obj.content_hash else ''
+    content_hash_short.short_description = 'Hash'
+    
+    def html_size(self, obj):
+        size = len(obj.html_content) if obj.html_content else 0
+        if size > 1024 * 1024:
+            return f"{size / (1024 * 1024):.2f} MB"
+        elif size > 1024:
+            return f"{size / 1024:.2f} KB"
+        return f"{size} bytes"
+    html_size.short_description = 'Size'
+
+
+@admin.register(HTMLDifference)
+class HTMLDifferenceAdmin(admin.ModelAdmin):
+    list_display = [
+        'competitor', 'url', 'change_type', 'is_significant', 
+        'total_changes', 'detected_at'
+    ]
+    list_filter = ['change_type', 'is_significant', 'detected_at', 'competitor']
+    search_fields = ['competitor__name', 'url']
+    readonly_fields = ['detected_at']
+    
+    def total_changes(self, obj):
+        if obj.diff_summary and isinstance(obj.diff_summary, dict):
+            return obj.diff_summary.get('total_changes', 0)
+        return 0
+    total_changes.short_description = 'Changes'
+

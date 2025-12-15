@@ -11,13 +11,15 @@ from django.db.models import Q
 
 from .models import (
     Competitor, MonitoringTask, ExtractedLinks, 
-    FilteredLinks, DailyScraperLinks, CompetitorHTML, CompetitorMetadata
+    FilteredLinks, DailyScraperLinks, CompetitorHTML, CompetitorMetadata,
+    HTMLSnapshot, HTMLDifference
 )
 from .serializers import (
     CompetitorSerializer, MonitoringTaskSerializer, 
     CompetitorCreateUpdateSerializer, UserRegistrationSerializer,
     UserSerializer, ExtractedLinksSerializer, FilteredLinksSerializer,
-    DailyScraperLinksSerializer, CompetitorHTMLSerializer, CompetitorMetadataSerializer
+    DailyScraperLinksSerializer, CompetitorHTMLSerializer, CompetitorMetadataSerializer,
+    HTMLSnapshotSerializer, HTMLDifferenceSerializer
 )
 
 
@@ -360,3 +362,62 @@ class CompetitorMetadataViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         return CompetitorMetadata.objects.filter(competitor__user=self.request.user)
+
+
+class HTMLSnapshotViewSet(viewsets.ModelViewSet):
+    """ViewSet for HTML snapshots."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = HTMLSnapshotSerializer
+    filterset_fields = ['competitor', 'url']
+    
+    def get_queryset(self):
+        return HTMLSnapshot.objects.filter(competitor__user=self.request.user)
+
+
+class HTMLDifferenceViewSet(viewsets.ModelViewSet):
+    """ViewSet for HTML differences."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = HTMLDifferenceSerializer
+    filterset_fields = ['competitor', 'url', 'change_type', 'is_significant']
+    
+    def get_queryset(self):
+        return HTMLDifference.objects.filter(competitor__user=self.request.user)
+    
+    @action(detail=False, methods=['get'])
+    def significant_changes(self, request):
+        """Get only significant changes that require RAG update."""
+        significant = self.get_queryset().filter(is_significant=True)
+        serializer = self.get_serializer(significant, many=True)
+        return Response({
+            'count': significant.count(),
+            'changes': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """Get summary of all HTML differences."""
+        queryset = self.get_queryset()
+        
+        summary = {
+            'total_differences': queryset.count(),
+            'by_change_type': {
+                'added': queryset.filter(change_type='added').count(),
+                'removed': queryset.filter(change_type='removed').count(),
+                'modified': queryset.filter(change_type='modified').count(),
+            },
+            'significant_changes': queryset.filter(is_significant=True).count(),
+            'by_competitor': {}
+        }
+        
+        # Group by competitor
+        for competitor in Competitor.objects.filter(user=request.user, is_deleted=False):
+            comp_diffs = queryset.filter(competitor=competitor)
+            if comp_diffs.exists():
+                summary['by_competitor'][competitor.name] = {
+                    'total': comp_diffs.count(),
+                    'significant': comp_diffs.filter(is_significant=True).count(),
+                    'urls_changed': comp_diffs.values('url').distinct().count()
+                }
+        
+        return Response(summary)
+

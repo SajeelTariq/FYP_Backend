@@ -4,7 +4,8 @@ from .views import (
     CompetitorViewSet, MonitoringTaskViewSet, 
     ExtractedLinksViewSet, FilteredLinksViewSet, 
     DailyScraperLinksViewSet, CompetitorHTMLViewSet, 
-    CompetitorMetadataViewSet, RegisterView, LoginView, LogoutView
+    CompetitorMetadataViewSet, HTMLSnapshotViewSet, HTMLDifferenceViewSet,
+    RegisterView, LoginView, LogoutView
 )
 
 router = DefaultRouter()
@@ -15,6 +16,8 @@ router.register(r'filtered-links', FilteredLinksViewSet, basename='filtered-link
 router.register(r'daily-scraper-links', DailyScraperLinksViewSet, basename='daily-scraper-links')
 router.register(r'html-content', CompetitorHTMLViewSet, basename='html-content')
 router.register(r'metadata', CompetitorMetadataViewSet, basename='metadata')
+router.register(r'html-snapshots', HTMLSnapshotViewSet, basename='html-snapshots')
+router.register(r'html-differences', HTMLDifferenceViewSet, basename='html-differences')
 
 urlpatterns = [
     path('auth/register/', RegisterView.as_view(), name='register'),

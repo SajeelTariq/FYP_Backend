@@ -142,3 +142,74 @@ class CompetitorMetadata(models.Model):
 
     def __str__(self):
         return f"{self.competitor.name} - Metadata"
+
+
+class HTMLSnapshot(models.Model):
+    """Model to store HTML snapshots for change tracking."""
+    competitor = models.ForeignKey(Competitor, on_delete=models.CASCADE, related_name='html_snapshots')
+    url = models.URLField()
+    html_content = models.TextField(help_text="Full HTML content snapshot")
+    content_hash = models.CharField(max_length=64, help_text="SHA256 hash of content for quick comparison")
+    snapshot_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-snapshot_at']
+        verbose_name = 'HTML Snapshot'
+        verbose_name_plural = 'HTML Snapshots'
+        indexes = [
+            models.Index(fields=['competitor', 'url', '-snapshot_at']),
+            models.Index(fields=['content_hash']),
+        ]
+
+    def __str__(self):
+        return f"{self.competitor.name} - {self.url} ({self.snapshot_at})"
+
+
+class HTMLDifference(models.Model):
+    """Model to track HTML differences between snapshots."""
+    CHANGE_TYPE_CHOICES = [
+        ('added', 'Content Added'),
+        ('removed', 'Content Removed'),
+        ('modified', 'Content Modified'),
+    ]
+
+    competitor = models.ForeignKey(Competitor, on_delete=models.CASCADE, related_name='html_differences')
+    url = models.URLField()
+    old_snapshot = models.ForeignKey(
+        HTMLSnapshot, 
+        on_delete=models.CASCADE, 
+        related_name='differences_as_old',
+        null=True,
+        blank=True
+    )
+    new_snapshot = models.ForeignKey(
+        HTMLSnapshot, 
+        on_delete=models.CASCADE, 
+        related_name='differences_as_new'
+    )
+    change_type = models.CharField(max_length=20, choices=CHANGE_TYPE_CHOICES)
+    diff_summary = models.JSONField(
+        default=dict, 
+        help_text="Summary of changes: added_sections, removed_sections, modified_sections"
+    )
+    detailed_diff = models.JSONField(
+        default=list,
+        help_text="Detailed line-by-line or block-by-block differences"
+    )
+    detected_at = models.DateTimeField(auto_now_add=True)
+    is_significant = models.BooleanField(
+        default=False, 
+        help_text="Whether this change is significant enough for RAG update"
+    )
+
+    class Meta:
+        ordering = ['-detected_at']
+        verbose_name = 'HTML Difference'
+        verbose_name_plural = 'HTML Differences'
+        indexes = [
+            models.Index(fields=['competitor', 'url', '-detected_at']),
+            models.Index(fields=['is_significant']),
+        ]
+
+    def __str__(self):
+        return f"{self.competitor.name} - {self.url} - {self.change_type} ({self.detected_at})"

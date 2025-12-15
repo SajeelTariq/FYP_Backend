@@ -1,26 +1,51 @@
 """
-RAG API Views for querying the knowledge base with ChromaDB.
+RAG API Views for querying the knowledge base with Agno Agent-based routing.
 """
+import os
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from django.conf import settings
 
 from .rag_service_chromadb import RAGServiceChroma
+from .agents.orchestrator_agno import OrchestratorAgent
+
+
+# Initialize Agno agent system (singleton pattern)
+_orchestrator = None
+
+def get_orchestrator():
+    """Get or create the Agno orchestrator agent."""
+    global _orchestrator
+    if _orchestrator is None:
+        # Get OpenRouter API key from settings
+        api_key = getattr(settings, 'OPENROUTER_API_KEY', os.getenv('OPENROUTER_API_KEY'))
+        
+        # Create orchestrator with Agno agents
+        _orchestrator = OrchestratorAgent(api_key=api_key)
+    
+    return _orchestrator
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def rag_query(request):
     """
-    RAG Query Endpoint - Complete RAG pipeline with hybrid retrieval + generation
+    RAG Query Endpoint - Agent-based routing to handle different query types
     
     Request body:
     {
-        "query": "What are the features of Honda BR-V?",
+        "query": "What are the features of Honda BR-V?",  // General query
+        // OR
+        "query": "What changes did Suzuki make last week?",  // HTML diff query
         "top_k": 5,  // optional, default 5
         "competitor_filter": "honda"  // optional: honda, suzuki, kia, or all
     }
+    
+    The orchestrator will automatically detect the query type and route to:
+    - GeneralQueryAgent: For product/feature/price queries
+    - HTMLDiffAgent: For website change/difference queries
     """
     query_text = request.data.get('query')
     
@@ -40,13 +65,21 @@ def rag_query(request):
         )
     
     try:
-        rag_service = RAGServiceChroma()
-        result = rag_service.query(
-            query_text=query_text,
-            top_k=top_k,
-            competitor_filter=competitor_filter
-        )
+        # Get orchestrator
+        orchestrator = get_orchestrator()
+        
+        # Prepare context for agents
+        context = {
+            'user': request.user,
+            'top_k': top_k,
+            'competitor_filter': competitor_filter
+        }
+        
+        # Execute query through orchestrator
+        result = orchestrator.execute(query_text, context)
+        
         return Response(result, status=status.HTTP_200_OK)
+        
     except Exception as e:
         return Response(
             {'error': f'Error processing query: {str(e)}'},
@@ -141,3 +174,32 @@ def get_competitors(request):
             {'error': f'Error fetching competitors: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def agent_stats(request):
+    """
+    Get Agent System Statistics
+    
+    Returns statistics about agent executions and routing
+    """
+    try:
+        orchestrator = get_orchestrator()
+        
+        # Get stats for all agents
+        agent_statistics = {
+            'orchestrator': orchestrator.get_stats(),
+            'agents': []
+        }
+        
+        for agent in orchestrator.agents:
+            agent_statistics['agents'].append(agent.get_stats())
+        
+        return Response(agent_statistics, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response(
+            {'error': f'Error fetching agent statistics: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
