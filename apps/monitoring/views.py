@@ -95,15 +95,19 @@ class CompetitorViewSet(viewsets.ModelViewSet):
         user = request.user
         
         # Check if competitor exists by website_base_url or other URLs
+        # Important: Check for both deleted and non-deleted competitors
         existing_competitor = None
+        was_deleted = False
         
-        # Try to find by website URL
+        # Try to find by website URL (including soft-deleted ones)
         if data.get('website_base_url'):
             existing_competitor = Competitor.objects.filter(
                 user=user,
-                website_base_url=data['website_base_url'],
-                is_deleted=False
+                website_base_url=data['website_base_url']
             ).first()
+            
+            if existing_competitor and existing_competitor.is_deleted:
+                was_deleted = True
         
         # If not found by website, try to find by other social media URLs
         if not existing_competitor:
@@ -119,11 +123,31 @@ class CompetitorViewSet(viewsets.ModelViewSet):
             
             if query:
                 existing_competitor = Competitor.objects.filter(
-                    query, user=user, is_deleted=False
+                    query, user=user
                 ).first()
+                
+                if existing_competitor and existing_competitor.is_deleted:
+                    was_deleted = True
         
         if existing_competitor:
-            # Update existing competitor with new URLs if provided
+            # If competitor was soft-deleted, restore it
+            if was_deleted:
+                existing_competitor.is_deleted = False
+                existing_competitor.deleted_at = None
+                # Update with new data
+                existing_competitor.name = data['name']
+                for field in ['website_base_url', 'linkedin_url', 'facebook_url', 'instagram_url', 'twitter_url']:
+                    setattr(existing_competitor, field, data.get(field) or None)
+                existing_competitor.save()
+                
+                return Response({
+                    'message': 'Competitor restored and updated successfully',
+                    'competitor': CompetitorSerializer(existing_competitor).data,
+                    'created': False,
+                    'restored': True
+                }, status=status.HTTP_200_OK)
+            
+            # Update existing active competitor with new URLs if provided
             updated = False
             for field in ['website_base_url', 'linkedin_url', 'facebook_url', 'instagram_url', 'twitter_url']:
                 if data.get(field) and not getattr(existing_competitor, field):
