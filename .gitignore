@@ -64,6 +64,7 @@ celerybeat.pid
 
 # Logs
 logs/
+!logs/.gitkeep
 *.log
 *.log.*
 
