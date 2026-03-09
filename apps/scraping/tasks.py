@@ -16,6 +16,99 @@ import json
 
 logger = logging.getLogger(__name__)
 
+# Maximum subpage links allowed per competitor (from settings, with fallback)
+MAX_COMPETITOR_LINKS = getattr(
+    __import__('django.conf', fromlist=['settings']).settings,
+    'MAX_COMPETITOR_LINKS', 100
+)
+
+
+def extract_competitor_links_sync(competitor_id):
+    """
+    Synchronous version of link extraction for use during competitor creation.
+    Returns result dict immediately instead of dispatching to Celery.
+    Enforces MAX_COMPETITOR_LINKS limit.
+    """
+    from apps.monitoring.models import Competitor, ExtractedLinks
+    
+    try:
+        competitor = Competitor.objects.get(id=competitor_id, is_deleted=False)
+        input_url = competitor.website_base_url
+        
+        if not input_url:
+            return {"status": "warning", "message": "No website URL provided"}
+        
+        # Automatically add https:// if not present
+        if not input_url.startswith(("http://", "https://")):
+            input_url = "https://" + input_url
+        
+        parsed_url = urlparse(input_url)
+        if not parsed_url.netloc:
+            return {"status": "error", "message": "Invalid URL format"}
+        
+        # Call Firecrawl API
+        api_url = "https://api.firecrawl.dev/v2/map"
+        payload = {
+            "url": input_url,
+            "limit": 5000,
+            "includeSubdomains": False,
+            "sitemap": "include"
+        }
+        api_headers = {
+            "Authorization": f"Bearer {settings.FIRECRAWL_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(api_url, json=payload, headers=api_headers)
+        
+        if response.status_code != 200:
+            logger.error(f"Firecrawl API error: {response.text}")
+            return {"status": "error", "message": "Firecrawl API error"}
+        
+        data = response.json()
+        links = data.get("links", [])
+        
+        if not links:
+            return {"status": "warning", "message": "No subpage links found for this website"}
+        
+        # Firecrawl /v2/map returns links as a list of strings
+        extracted_urls = links
+        
+        # Enforce maximum link count
+        if len(extracted_urls) > MAX_COMPETITOR_LINKS:
+            logger.warning(
+                f"Competitor {competitor.name} has {len(extracted_urls)} links, "
+                f"exceeds the maximum of {MAX_COMPETITOR_LINKS}"
+            )
+            return {
+                "status": "error",
+                "message": (
+                    f"This competitor's website has {len(extracted_urls)} subpage links, "
+                    f"which exceeds the maximum allowed limit of {MAX_COMPETITOR_LINKS}. "
+                    f"Cannot proceed with this competitor."
+                ),
+                "links_count": len(extracted_urls)
+            }
+        
+        # Store in database
+        ExtractedLinks.objects.update_or_create(
+            competitor=competitor,
+            defaults={'links': extracted_urls}
+        )
+        
+        logger.info(f"Extracted {len(extracted_urls)} links for {competitor.name}")
+        return {
+            "status": "success",
+            "competitor": competitor.name,
+            "links_count": len(extracted_urls)
+        }
+        
+    except Competitor.DoesNotExist:
+        return {"status": "error", "message": "Competitor not found"}
+    except Exception as e:
+        logger.error(f"Error extracting links for competitor {competitor_id}: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
 
 @shared_task
 def extract_competitor_links(competitor_id):
@@ -83,10 +176,26 @@ def extract_competitor_links(competitor_id):
             logger.warning(f"No links found for {competitor.name}")
             return {"status": "warning", "message": "No links found"}
         
-        # Extract URLs from response
-        extracted_urls = [item["url"] for item in links]
+        # Firecrawl /v2/map returns links as a list of strings
+        extracted_urls = links
         
-        # Store in database instead of text file
+        # Enforce maximum link count
+        if len(extracted_urls) > MAX_COMPETITOR_LINKS:
+            logger.warning(
+                f"Competitor {competitor.name} has {len(extracted_urls)} links, "
+                f"exceeds the maximum of {MAX_COMPETITOR_LINKS}"
+            )
+            return {
+                "status": "error",
+                "message": (
+                    f"This competitor's website has {len(extracted_urls)} subpage links, "
+                    f"which exceeds the maximum allowed limit of {MAX_COMPETITOR_LINKS}. "
+                    f"Cannot proceed with this competitor."
+                ),
+                "links_count": len(extracted_urls)
+            }
+        
+        # Store in database
         extracted_links, created = ExtractedLinks.objects.update_or_create(
             competitor=competitor,
             defaults={'links': extracted_urls}
