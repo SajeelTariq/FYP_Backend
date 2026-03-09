@@ -12,6 +12,7 @@ class Competitor(models.Model):
     instagram_url = models.URLField(blank=True, null=True)
     twitter_url = models.URLField(blank=True, null=True)
     is_deleted = models.BooleanField(default=False)
+    change_count = models.PositiveIntegerField(default=0, help_text="Running total of detected changes")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
@@ -200,6 +201,11 @@ class HTMLDifference(models.Model):
     is_significant = models.BooleanField(
         default=False, 
         help_text="Whether this change is significant enough for RAG update"
+    )
+    llm_summary = models.TextField(
+        blank=True,
+        default='',
+        help_text="LLM-generated human-readable summary of the changes"
     )
 
     class Meta:

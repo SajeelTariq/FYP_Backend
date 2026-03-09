@@ -13,8 +13,8 @@ app.autodiscover_tasks()
 
 # Scheduled tasks
 app.conf.beat_schedule = {
-    'scrape-competitors-daily': {
-        'task': 'apps.scraping.tasks.scrape_all_competitors',
+    'daily-competitor-monitoring': {
+        'task': 'apps.scraping.tasks.run_daily_monitoring',
         'schedule': crontab(hour=2, minute=0),  # Run daily at 2 AM
     },
     'update-analytics-hourly': {

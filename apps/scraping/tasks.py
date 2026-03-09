@@ -11,8 +11,10 @@ from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from bs4 import BeautifulSoup
 import re
+import random
 import hashlib
 import json
+from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -485,3 +487,540 @@ def scrape_all_competitors():
         scrape_competitor.delay(config.id)
     
     logger.info(f"Triggered scraping for {active_configs.count()} competitors")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Daily Monitoring Pipeline (Cron Job)
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _call_openrouter_llm(prompt: str) -> str:
+    """Call OpenRouter API (GPT-4o-mini) to generate a summary."""
+    api_key = settings.OPENROUTER_API_KEY
+    if not api_key:
+        return "LLM summary unavailable (no API key configured)"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "openai/gpt-4o-mini",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.5,
+        "max_tokens": 600,
+    }
+    try:
+        resp = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.error(f"OpenRouter LLM error: {e}")
+        return f"LLM summary generation failed: {e}"
+
+
+def _step1_refresh_links(competitor):
+    """
+    Step 1 – Re-fetch sub-links via Firecrawl, compare with stored links,
+    and flag new/removed URLs.  Returns (new_links, removed_links, all_current_links).
+    """
+    from apps.monitoring.models import ExtractedLinks
+
+    input_url = competitor.website_base_url
+    if not input_url:
+        return [], [], []
+
+    if not input_url.startswith(("http://", "https://")):
+        input_url = "https://" + input_url
+
+    api_url = "https://api.firecrawl.dev/v2/map"
+    payload = {
+        "url": input_url,
+        "limit": 5000,
+        "includeSubdomains": False,
+        "sitemap": "include",
+    }
+    api_headers = {
+        "Authorization": f"Bearer {settings.FIRECRAWL_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(api_url, json=payload, headers=api_headers, timeout=60)
+        if response.status_code != 200:
+            logger.error(f"Firecrawl API error for {competitor.name}: {response.text}")
+            return [], [], []
+
+        current_links = response.json().get("links", [])
+    except Exception as e:
+        logger.error(f"Firecrawl request failed for {competitor.name}: {e}")
+        return [], [], []
+
+    # Normalize to strings — Firecrawl v1 returns dicts, v2/map may vary
+    def _to_url_str(item):
+        if isinstance(item, dict):
+            return item.get("url") or item.get("href") or str(item)
+        return str(item)
+
+    current_links = [_to_url_str(l) for l in current_links]
+
+    # Enforce max links
+    max_links = getattr(settings, "MAX_COMPETITOR_LINKS", 500)
+    if len(current_links) > max_links:
+        logger.warning(
+            f"{competitor.name} has {len(current_links)} links, trimming to {max_links}"
+        )
+        current_links = current_links[:max_links]
+
+    # Compare with previously stored links
+    stored_obj = ExtractedLinks.objects.filter(competitor=competitor).first()
+    stored_links = set(_to_url_str(l) for l in stored_obj.links) if stored_obj else set()
+    current_set = set(current_links)
+
+    new_links = list(current_set - stored_links)
+    removed_links = list(stored_links - current_set)
+
+    # Persist updated links
+    ExtractedLinks.objects.update_or_create(
+        competitor=competitor,
+        defaults={"links": current_links},
+    )
+
+    logger.info(
+        f"[Step1] {competitor.name}: {len(current_links)} links "
+        f"(+{len(new_links)} new, -{len(removed_links)} removed)"
+    )
+    return new_links, removed_links, current_links
+
+
+def _is_bot_challenge_page(html: str) -> bool:
+    """Return True if the page is a bot-detection / challenge wall (e.g. Cloudflare)."""
+    markers = [
+        "cf-chl-opt",           # Cloudflare managed challenge JS object
+        "challenge-platform",   # Cloudflare challenge script path
+        "Enable JavaScript and cookies to continue",  # CF challenge noscript text
+        "Just a moment",        # Cloudflare page title
+        "_cf_chl_opt",          # Cloudflare challenge option variable
+    ]
+    lower = html[:4000]  # Only check the head of the page — fast
+    return any(m in lower for m in markers)
+
+
+def _step2_scrape_html(competitor, urls_to_scrape):
+    """
+    Step 2 – Scrape raw HTML for each URL using Playwright.
+    Stores in CompetitorHTML (update_or_create).
+    Returns count of successfully scraped pages.
+
+    Uses async Playwright inside asyncio.run() in a dedicated ThreadPoolExecutor
+    thread so there is never a conflicting event loop.  All Django ORM writes
+    happen back in the calling thread.  Bot-challenge pages (Cloudflare etc.) are
+    detected and discarded rather than saved as garbage HTML.
+    """
+    import asyncio
+    import concurrent.futures
+    from playwright.async_api import async_playwright
+    from apps.monitoring.models import CompetitorHTML
+
+    if not urls_to_scrape:
+        return 0
+
+    competitor_name = competitor.name
+
+    async def _scrape_all(urls):
+        """Return {url: pretty_html} for every successfully scraped, non-blocked page."""
+        results = {}
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                    "--window-size=1280,800",
+                ],
+            )
+            context = await browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1280, "height": 800},
+                java_script_enabled=True,
+                locale="en-US",
+                timezone_id="America/New_York",
+                extra_http_headers={
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept-Encoding": "gzip, deflate, br",
+                    "DNT": "1",
+                    "Upgrade-Insecure-Requests": "1",
+                },
+            )
+            await context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => false});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                window.chrome = {runtime: {}};
+            """)
+            page = await context.new_page()
+
+            for url in urls:
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+                    cleaned_html = await page.evaluate("""
+                        () => {
+                            document.querySelectorAll(
+                                'style, link[rel="stylesheet"], link[type="text/css"]'
+                            ).forEach(n => n.remove());
+                            const all = document.querySelectorAll('*');
+                            all.forEach(el => {
+                                if (el.hasAttribute('style')) el.removeAttribute('style');
+                            });
+                            return document.documentElement.outerHTML;
+                        }
+                    """)
+
+                    # Discard bot-challenge / firewall pages
+                    if _is_bot_challenge_page(cleaned_html):
+                        logger.warning(f"[Step2] Bot challenge detected, skipping: {url}")
+                        continue
+
+                    soup = BeautifulSoup(cleaned_html, "html.parser")
+                    results[url] = soup.prettify()
+
+                    # Random pause between requests to avoid rate-limiting
+                    await asyncio.sleep(random.uniform(1.5, 3.0))
+                except Exception as e:
+                    logger.error(f"[Step2] Error scraping {url}: {e}")
+
+            await page.close()
+            await context.close()
+            await browser.close()
+
+        return results
+
+    def _thread_worker(urls):
+        return asyncio.run(_scrape_all(urls))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        scraped_html = executor.submit(_thread_worker, urls_to_scrape).result()
+
+    # ORM writes happen here — synchronous, no event loop present
+    for url, html in scraped_html.items():
+        CompetitorHTML.objects.update_or_create(
+            competitor=competitor,
+            url=url,
+            defaults={"html_content": html},
+        )
+
+    scraped = len(scraped_html)
+    skipped = len(urls_to_scrape) - scraped
+    if skipped:
+        logger.warning(f"[Step2] {competitor_name}: {skipped} URLs skipped (bot protection)")
+    logger.info(f"[Step2] {competitor_name}: scraped {scraped}/{len(urls_to_scrape)} pages")
+    return scraped
+
+
+def _step3_detect_changes_and_summarize(competitor, urls_to_check):
+    """
+    Step 3 – For each URL:
+      a) Compute SHA-256 of current HTML (from CompetitorHTML)
+      b) Compare with latest HTMLSnapshot
+      c) If changed: create new snapshot, compute diff, call LLM for summary,
+         store HTMLDifference, increment Competitor.change_count
+    Returns number of changes detected.
+    """
+    from apps.monitoring.models import CompetitorHTML, HTMLSnapshot, HTMLDifference
+
+    if not urls_to_check:
+        return 0
+
+    changes_detected = 0
+
+    for url in urls_to_check:
+        html_obj = CompetitorHTML.objects.filter(competitor=competitor, url=url).first()
+        if not html_obj:
+            continue
+
+        current_html = html_obj.html_content
+        current_hash = hashlib.sha256(current_html.encode("utf-8")).hexdigest()
+
+        # Get latest snapshot for this competitor+url
+        latest_snapshot = (
+            HTMLSnapshot.objects.filter(competitor=competitor, url=url)
+            .order_by("-snapshot_at")
+            .first()
+        )
+
+        is_first_time = latest_snapshot is None
+        has_changed = is_first_time or latest_snapshot.content_hash != current_hash
+
+        if not has_changed:
+            continue  # No change for this URL
+
+        # Create new snapshot
+        new_snapshot = HTMLSnapshot.objects.create(
+            competitor=competitor,
+            url=url,
+            html_content=current_html,
+            content_hash=current_hash,
+        )
+
+        if is_first_time:
+            # First time — record initial snapshot, no diff needed
+            HTMLDifference.objects.create(
+                competitor=competitor,
+                url=url,
+                old_snapshot=None,
+                new_snapshot=new_snapshot,
+                change_type="added",
+                diff_summary={"note": "Initial snapshot recorded"},
+                detailed_diff=[],
+                is_significant=False,
+                llm_summary="Initial snapshot — no previous version to compare.",
+            )
+            continue  # Don't count initial snapshots as "changes"
+
+        # ── Compute diff ──
+        old_lines = latest_snapshot.html_content.splitlines()
+        new_lines = current_html.splitlines()
+        sm = SequenceMatcher(None, old_lines, new_lines)
+
+        added_count = 0
+        removed_count = 0
+        diff_blocks = []
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "equal":
+                continue
+            block = {
+                "type": tag,
+                "old_range": [i1, i2],
+                "new_range": [j1, j2],
+            }
+            if tag in ("replace", "delete"):
+                removed_count += i2 - i1
+            if tag in ("replace", "insert"):
+                added_count += j2 - j1
+            diff_blocks.append(block)
+
+        if not diff_blocks:
+            continue  # Edge case — hash differs but no line diff
+
+        # Determine change_type
+        if removed_count == 0:
+            change_type = "added"
+        elif added_count == 0:
+            change_type = "removed"
+        else:
+            change_type = "modified"
+
+        diff_summary = {
+            "added_lines": added_count,
+            "removed_lines": removed_count,
+            "total_blocks": len(diff_blocks),
+        }
+
+        # ── LLM summary ──
+        # Build a concise context of what changed (limit token usage)
+        diff_context_parts = []
+        for block in diff_blocks[:10]:  # Cap to 10 blocks
+            if block["type"] in ("replace", "delete"):
+                old_slice = old_lines[block["old_range"][0]:block["old_range"][1]]
+                diff_context_parts.append("REMOVED:\n" + "\n".join(old_slice[:20]))
+            if block["type"] in ("replace", "insert"):
+                new_slice = new_lines[block["new_range"][0]:block["new_range"][1]]
+                diff_context_parts.append("ADDED:\n" + "\n".join(new_slice[:20]))
+
+        diff_context = "\n---\n".join(diff_context_parts)
+        llm_prompt = (
+            f"The following HTML changes were detected on the page: {url}\n"
+            f"Competitor: {competitor.name}\n\n"
+            f"Changes:\n{diff_context}\n\n"
+            "Please provide a concise, human-readable summary (2-4 sentences) "
+            "of what changed on this page. Focus on meaningful content changes, "
+            "ignoring minor formatting/whitespace."
+        )
+        llm_summary = _call_openrouter_llm(llm_prompt)
+
+        is_significant = (added_count + removed_count) > 5
+
+        HTMLDifference.objects.create(
+            competitor=competitor,
+            url=url,
+            old_snapshot=latest_snapshot,
+            new_snapshot=new_snapshot,
+            change_type=change_type,
+            diff_summary=diff_summary,
+            detailed_diff=diff_blocks,
+            is_significant=is_significant,
+            llm_summary=llm_summary,
+        )
+
+        changes_detected += 1
+
+    # Increment change_count on Competitor
+    if changes_detected > 0:
+        from django.db.models import F
+        from apps.monitoring.models import Competitor as CompetitorModel
+
+        CompetitorModel.objects.filter(pk=competitor.pk).update(
+            change_count=F("change_count") + changes_detected
+        )
+        competitor.refresh_from_db()
+
+    logger.info(f"[Step3] {competitor.name}: {changes_detected} changes detected")
+    return changes_detected
+
+
+def _step4_extract_clean_text(competitor, urls_to_process):
+    """
+    Step 4 – Extract clean text from CompetitorHTML → store in CompetitorMetadata.
+    Reuses the same logic as extract_competitor_metadata but scoped to given URLs.
+    """
+    from apps.monitoring.models import CompetitorHTML, CompetitorMetadata
+
+    if not urls_to_process:
+        return 0
+
+    processed = 0
+    for url in urls_to_process:
+        html_obj = CompetitorHTML.objects.filter(competitor=competitor, url=url).first()
+        if not html_obj:
+            continue
+
+        try:
+            soup = BeautifulSoup(html_obj.html_content, "html.parser")
+            # Remove non-visible elements
+            for tag in soup(["script", "style", "noscript", "svg", "iframe", "meta", "link"]):
+                tag.extract()
+
+            all_text = soup.get_text(separator="\n")
+            lines = [re.sub(r"\s+", " ", line).strip() for line in all_text.split("\n")]
+
+            cleaned = []
+            seen = set()
+            for line in lines:
+                if len(line) < 3:
+                    continue
+                line = re.sub(r"^[\-\•\▪]+ ?", "", line)
+                key = hashlib.md5(line.lower().encode()).hexdigest()
+                if key not in seen:
+                    seen.add(key)
+                    cleaned.append(line)
+
+            content_text = "\n".join(cleaned)
+            title = soup.title.string.strip() if soup.title and soup.title.string else None
+
+            metadata = {
+                "url": url,
+                "title": title,
+                "content": content_text,
+                "content_length": len(content_text),
+                "line_count": len(cleaned),
+            }
+
+            CompetitorMetadata.objects.update_or_create(
+                competitor=competitor,
+                url=url,
+                defaults={"metadata": metadata},
+            )
+            processed += 1
+        except Exception as e:
+            logger.error(f"[Step4] Error processing {url}: {e}")
+            continue
+
+    logger.info(f"[Step4] {competitor.name}: processed {processed}/{len(urls_to_process)} pages")
+    return processed
+
+
+def _step5_update_embeddings(competitor):
+    """
+    Step 5 – Re-embed this competitor's data into ChromaDB from CompetitorMetadata.
+    Deletes existing chunks for this competitor and re-ingests from DB.
+    """
+    try:
+        from apps.rag.rag_service_chromadb import RAGServiceChroma
+
+        rag_service = RAGServiceChroma()
+        result = rag_service.ingest_competitor_from_db(competitor)
+        logger.info(
+            f"[Step5] {competitor.name}: "
+            f"{result.get('added', 0)} chunks added, "
+            f"{result.get('deleted', 0)} old chunks removed"
+        )
+        return result
+    except Exception as e:
+        logger.error(f"[Step5] Embedding update failed for {competitor.name}: {e}")
+        return {"added": 0, "deleted": 0, "error": str(e)}
+
+
+@shared_task
+def run_daily_monitoring():
+    """
+    Daily monitoring pipeline — runs for ALL active (non-deleted) competitors.
+
+    Steps per competitor:
+      1. Firecrawl sub-links refresh  → detect new/removed URLs
+      2. Scrape raw HTML              → store in CompetitorHTML
+      3. HTML diff + LLM summary      → store in HTMLDifference
+      4. Clean text extraction         → store in CompetitorMetadata
+      5. ChromaDB embedding update     → re-embed competitor data
+    """
+    from apps.monitoring.models import Competitor
+
+    competitors = Competitor.objects.filter(is_deleted=False)
+    if not competitors.exists():
+        logger.info("[DailyMonitoring] No active competitors found — skipping.")
+        return {"status": "skipped", "message": "No active competitors"}
+
+    results = {}
+    for comp in competitors:
+        logger.info(f"[DailyMonitoring] ══ Starting pipeline for {comp.name} ══")
+        comp_result = {}
+
+        try:
+            # Step 1: Refresh links
+            new_links, removed_links, all_links = _step1_refresh_links(comp)
+            comp_result["step1_links"] = {
+                "total": len(all_links),
+                "new": len(new_links),
+                "removed": len(removed_links),
+            }
+
+            # Step 2: Scrape HTML for ALL current links
+            scraped = _step2_scrape_html(comp, all_links)
+            comp_result["step2_scrape"] = {"scraped": scraped, "total": len(all_links)}
+
+            # Step 3: Detect changes & generate LLM summaries
+            changes = _step3_detect_changes_and_summarize(comp, all_links)
+            comp_result["step3_changes"] = changes
+
+            # Step 4: Extract clean text for all pages
+            processed = _step4_extract_clean_text(comp, all_links)
+            comp_result["step4_metadata"] = processed
+
+            # Step 5: Update ChromaDB embeddings
+            embed_result = _step5_update_embeddings(comp)
+            comp_result["step5_embeddings"] = embed_result
+
+            comp_result["status"] = "success"
+            logger.info(f"[DailyMonitoring] ══ Completed {comp.name} ══")
+
+        except Exception as e:
+            comp_result["status"] = "error"
+            comp_result["error"] = str(e)
+            logger.error(f"[DailyMonitoring] Pipeline failed for {comp.name}: {e}")
+
+        results[comp.name] = comp_result
+
+    logger.info(f"[DailyMonitoring] Finished all competitors: {list(results.keys())}")
+    return {"status": "completed", "results": results}
