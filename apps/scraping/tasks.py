@@ -246,71 +246,64 @@ def scrape_competitor_html(competitor_id, use_filtered_links=False):
         urls = link_obj.links
         scraped_count = 0
         
-        # Use Playwright to scrape each URL
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-blink-features=AutomationControlled",
-            ])
-            
-            context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-                viewport={"width": 1280, "height": 800},
-                java_script_enabled=True,
-            )
-            
-            context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => false});"
-            )
-            
-            page = context.new_page()
-            
-            for url in urls:
-                try:
-                    logger.info(f"🌐 Scraping: {url}")
+        # Use Playwright to scrape each URL — fresh browser per URL to avoid
+        # bot-detection fingerprinting from shared browser sessions.
+        for url in urls:
+            try:
+                logger.info(f"🌐 Scraping: {url}")
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True, args=[
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-blink-features=AutomationControlled",
+                    ])
+                    context = browser.new_context(
+                        user_agent=(
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/120.0.0.0 Safari/537.36"
+                        ),
+                        viewport={"width": 1280, "height": 800},
+                        java_script_enabled=True,
+                    )
+                    context.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', {get: () => false});"
+                    )
+                    page = context.new_page()
                     page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                    
+
                     # Get outer HTML and clean, remove CSS and inline styles
                     cleaned_html = page.evaluate("""
                         () => {
-                            // Remove CSS files and <style> tags
                             document.querySelectorAll('style, link[rel="stylesheet"], link[type="text/css"]').forEach(n => n.remove());
-
-                            // Remove inline style attributes
                             const all = document.querySelectorAll('*');
                             all.forEach(el => {
                                 if (el.hasAttribute('style')) el.removeAttribute('style');
                             });
-
                             return document.documentElement.outerHTML;
                         }
                     """)
-                    
-                    soup = BeautifulSoup(cleaned_html, "html.parser")
-                    pretty_html = soup.prettify()
-                    
-                    # Store in database instead of HTML file
-                    CompetitorHTML.objects.update_or_create(
-                        competitor=competitor,
-                        url=url,
-                        defaults={'html_content': pretty_html}
-                    )
-                    
-                    scraped_count += 1
-                    logger.info(f"✅ Saved HTML for: {url}")
-                    
-                except Exception as e:
-                    logger.error(f"❌ Error scraping {url}: {str(e)}")
-                    continue
-            
-            page.close()
-            context.close()
-            browser.close()
+
+                    page.close()
+                    context.close()
+                    browser.close()
+
+                soup = BeautifulSoup(cleaned_html, "html.parser")
+                pretty_html = soup.prettify()
+
+                # Store in database instead of HTML file
+                CompetitorHTML.objects.update_or_create(
+                    competitor=competitor,
+                    url=url,
+                    defaults={'html_content': pretty_html}
+                )
+
+                scraped_count += 1
+                logger.info(f"✅ Saved HTML for: {url}")
+
+            except Exception as e:
+                logger.error(f"❌ Error scraping {url}: {str(e)}")
+                continue
         
         logger.info(f"✅ Scraped {scraped_count}/{len(urls)} pages for {competitor.name}")
         return {
@@ -617,104 +610,68 @@ def _step2_scrape_html(competitor, urls_to_scrape):
     Stores in CompetitorHTML (update_or_create).
     Returns count of successfully scraped pages.
 
-    Uses async Playwright inside asyncio.run() in a dedicated ThreadPoolExecutor
-    thread so there is never a conflicting event loop.  All Django ORM writes
-    happen back in the calling thread.  Bot-challenge pages (Cloudflare etc.) are
-    detected and discarded rather than saved as garbage HTML.
+    Uses sync Playwright with a fresh browser+context+page per URL so each
+    request has a completely clean fingerprint.  Bot-challenge pages
+    (Cloudflare etc.) are detected and discarded rather than saved as garbage.
     """
-    import asyncio
-    import concurrent.futures
-    from playwright.async_api import async_playwright
     from apps.monitoring.models import CompetitorHTML
 
     if not urls_to_scrape:
         return 0
 
     competitor_name = competitor.name
+    scraped_html = {}
 
-    async def _scrape_all(urls):
-        """Return {url: pretty_html} for every successfully scraped, non-blocked page."""
-        results = {}
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
+    for url in urls_to_scrape:
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, args=[
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-blink-features=AutomationControlled",
-                    "--disable-infobars",
-                    "--window-size=1280,800",
-                ],
-            )
-            context = await browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-                viewport={"width": 1280, "height": 800},
-                java_script_enabled=True,
-                locale="en-US",
-                timezone_id="America/New_York",
-                extra_http_headers={
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept-Encoding": "gzip, deflate, br",
-                    "DNT": "1",
-                    "Upgrade-Insecure-Requests": "1",
-                },
-            )
-            await context.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {get: () => false});
-                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
-                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-                window.chrome = {runtime: {}};
-            """)
-            page = await context.new_page()
+                ])
+                context = browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    viewport={"width": 1280, "height": 800},
+                    java_script_enabled=True,
+                )
+                context.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get: () => false});"
+                )
+                page = context.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
-            for url in urls:
-                try:
-                    await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                cleaned_html = page.evaluate("""
+                    () => {
+                        document.querySelectorAll('style, link[rel="stylesheet"], link[type="text/css"]').forEach(n => n.remove());
+                        const all = document.querySelectorAll('*');
+                        all.forEach(el => {
+                            if (el.hasAttribute('style')) el.removeAttribute('style');
+                        });
+                        return document.documentElement.outerHTML;
+                    }
+                """)
 
-                    cleaned_html = await page.evaluate("""
-                        () => {
-                            document.querySelectorAll(
-                                'style, link[rel="stylesheet"], link[type="text/css"]'
-                            ).forEach(n => n.remove());
-                            const all = document.querySelectorAll('*');
-                            all.forEach(el => {
-                                if (el.hasAttribute('style')) el.removeAttribute('style');
-                            });
-                            return document.documentElement.outerHTML;
-                        }
-                    """)
+                page.close()
+                context.close()
+                browser.close()
 
-                    # Discard bot-challenge / firewall pages
-                    if _is_bot_challenge_page(cleaned_html):
-                        logger.warning(f"[Step2] Bot challenge detected, skipping: {url}")
-                        continue
+            # Discard bot-challenge / firewall pages
+            if _is_bot_challenge_page(cleaned_html):
+                logger.warning(f"[Step2] Bot challenge detected, skipping: {url}")
+                continue
 
-                    soup = BeautifulSoup(cleaned_html, "html.parser")
-                    results[url] = soup.prettify()
+            soup = BeautifulSoup(cleaned_html, "html.parser")
+            scraped_html[url] = soup.prettify()
 
-                    # Random pause between requests to avoid rate-limiting
-                    await asyncio.sleep(random.uniform(1.5, 3.0))
-                except Exception as e:
-                    logger.error(f"[Step2] Error scraping {url}: {e}")
+        except Exception as e:
+            logger.error(f"[Step2] Error scraping {url}: {e}")
 
-            await page.close()
-            await context.close()
-            await browser.close()
-
-        return results
-
-    def _thread_worker(urls):
-        return asyncio.run(_scrape_all(urls))
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        scraped_html = executor.submit(_thread_worker, urls_to_scrape).result()
-
-    # ORM writes happen here — synchronous, no event loop present
+    # ORM writes happen after all scraping is done
     for url, html in scraped_html.items():
         CompetitorHTML.objects.update_or_create(
             competitor=competitor,
