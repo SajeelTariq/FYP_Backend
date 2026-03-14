@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'django_celery_results',
     
     # Local apps
+    'apps.accounts',
     'apps.monitoring',
     'apps.scraping',
     'apps.rag',
