@@ -47,6 +47,8 @@ class RoleDetailView(APIView):
     permission_classes = [IsAuthenticated, HasSettingsPermission]
 
     def _get_role(self, pk):
+        if self.request.user.profile.user_type == 'super_admin':
+            return get_object_or_404(Role, pk=pk)
         return get_object_or_404(Role, pk=pk, created_by=self.request.user)
 
     def get(self, request, pk):
@@ -70,7 +72,10 @@ class RolePermissionView(APIView):
     permission_classes = [IsAuthenticated, HasSettingsPermission]
 
     def patch(self, request, pk):
-        role = get_object_or_404(Role, pk=pk, created_by=request.user)
+        if request.user.profile.user_type == 'super_admin':
+            role = get_object_or_404(Role, pk=pk)
+        else:
+            role = get_object_or_404(Role, pk=pk, created_by=request.user)
         permissions, _ = RolePermission.objects.get_or_create(role=role)
         serializer = RolePermissionSerializer(permissions, data=request.data, partial=True)
         if serializer.is_valid():
