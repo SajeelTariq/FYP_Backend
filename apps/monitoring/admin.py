@@ -8,10 +8,10 @@ from .models import (
 
 @admin.register(Competitor)
 class CompetitorAdmin(admin.ModelAdmin):
-    list_display = ['name', 'user', 'website_base_url', 'is_deleted', 'created_at']
+    list_display = ['name', 'user', 'website_base_url', 'change_count', 'is_deleted', 'created_at']
     list_filter = ['is_deleted', 'created_at', 'user']
     search_fields = ['name', 'website_base_url', 'user__username']
-    readonly_fields = ['created_at', 'updated_at', 'deleted_at']
+    readonly_fields = ['created_at', 'updated_at', 'deleted_at', 'change_count']
 
 
 @admin.register(MonitoringTask)
@@ -105,8 +105,8 @@ class HTMLDifferenceAdmin(admin.ModelAdmin):
         'total_changes', 'detected_at'
     ]
     list_filter = ['change_type', 'is_significant', 'detected_at', 'competitor']
-    search_fields = ['competitor__name', 'url']
-    readonly_fields = ['detected_at']
+    search_fields = ['competitor__name', 'url', 'llm_summary']
+    readonly_fields = ['detected_at', 'llm_summary']
     
     def total_changes(self, obj):
         if obj.diff_summary and isinstance(obj.diff_summary, dict):

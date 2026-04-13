@@ -595,3 +595,90 @@ Answer:"""
             })
         
         return competitors
+
+    def ingest_competitor_from_db(self, competitor) -> Dict[str, int]:
+        """
+        Ingest a single competitor's data from DB (CompetitorMetadata) into ChromaDB.
+        Deletes existing chunks for this competitor first, then re-ingests.
+
+        Args:
+            competitor: Competitor model instance
+
+        Returns:
+            Dict with 'added' and 'deleted' counts
+        """
+        from apps.monitoring.models import CompetitorMetadata
+
+        competitor_name = competitor.name.lower().replace(" ", "_")
+
+        # Delete existing chunks for this competitor
+        existing = self.collection.get(
+            where={"competitor_name": competitor_name},
+            include=["metadatas"],
+        )
+        deleted = 0
+        if existing and existing["ids"]:
+            self.collection.delete(ids=existing["ids"])
+            deleted = len(existing["ids"])
+
+        # Fetch all metadata records for this competitor from DB
+        metadata_qs = CompetitorMetadata.objects.filter(competitor=competitor)
+        if not metadata_qs.exists():
+            self._build_bm25_index()
+            return {"added": 0, "deleted": deleted}
+
+        chunk_ids = []
+        embeddings = []
+        documents = []
+        metadatas = []
+        existing_chunks: List[str] = []
+
+        for meta_obj in metadata_qs:
+            meta = meta_obj.metadata
+            content = meta.get("content", "")
+            url = meta.get("url", meta_obj.url)
+            title = meta.get("title", "") or url
+
+            if not content or len(content.strip()) < 50:
+                continue
+
+            chunks = self.chunk_text(content)
+            for idx, chunk_text in enumerate(chunks):
+                if self._is_duplicate_chunk(chunk_text, existing_chunks, threshold=0.85):
+                    continue
+                existing_chunks.append(chunk_text)
+
+                chunk_id = (
+                    f"{competitor_name}_db_{meta_obj.pk}_{idx}_{int(time.time() * 1000)}"
+                )
+                embedding = self.generate_embedding(chunk_text)
+                metadata_entry = {
+                    "competitor_name": competitor_name,
+                    "source_file": f"db_meta_{meta_obj.pk}",
+                    "url": url,
+                    "title": title,
+                    "chunk_index": idx,
+                    "chunk_size": len(chunk_text),
+                    "base_url": self._normalize_url(url),
+                }
+
+                chunk_ids.append(chunk_id)
+                embeddings.append(embedding)
+                documents.append(chunk_text)
+                metadatas.append(metadata_entry)
+
+        if chunk_ids:
+            # ChromaDB add in batches to avoid oversized requests
+            batch_size = 500
+            for i in range(0, len(chunk_ids), batch_size):
+                self.collection.add(
+                    ids=chunk_ids[i : i + batch_size],
+                    embeddings=embeddings[i : i + batch_size],
+                    documents=documents[i : i + batch_size],
+                    metadatas=metadatas[i : i + batch_size],
+                )
+
+        # Rebuild BM25 index
+        self._build_bm25_index()
+
+        return {"added": len(chunk_ids), "deleted": deleted}

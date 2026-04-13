@@ -65,11 +65,11 @@ class CompetitorSerializer(serializers.ModelSerializer):
 class CompetitorCreateUpdateSerializer(serializers.Serializer):
     """Serializer for creating or updating competitors with duplicate checking."""
     name = serializers.CharField(max_length=255)
-    website_base_url = serializers.URLField(required=False, allow_blank=True)
-    linkedin_url = serializers.URLField(required=False, allow_blank=True)
-    facebook_url = serializers.URLField(required=False, allow_blank=True)
-    instagram_url = serializers.URLField(required=False, allow_blank=True)
-    twitter_url = serializers.URLField(required=False, allow_blank=True)
+    website_base_url = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    linkedin_url = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    facebook_url = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    instagram_url = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    twitter_url = serializers.CharField(required=False, allow_blank=True, max_length=2000)
 
     def validate(self, data):
         # At least one URL must be provided

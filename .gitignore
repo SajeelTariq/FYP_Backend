@@ -103,3 +103,5 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+continuation_prompt.txt

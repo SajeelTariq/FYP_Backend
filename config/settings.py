@@ -20,6 +20,9 @@ FIRECRAWL_API_KEY = os.getenv('FIRECRAWL_API_KEY', '')
 # OpenRouter API Configuration (used by Agno agents)
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
 
+# Maximum number of subpage links allowed per competitor
+MAX_COMPETITOR_LINKS = int(os.getenv('MAX_COMPETITOR_LINKS', '500'))
+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 

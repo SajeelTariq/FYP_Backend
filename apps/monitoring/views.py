@@ -7,7 +7,9 @@ from rest_framework.authtoken.views import ObtainAuthToken
 from django.contrib.auth import authenticate, logout
 from django.contrib.auth.models import User
 from django.utils import timezone
+from django.conf import settings
 from django.db.models import Q
+import logging
 
 from .models import (
     Competitor, MonitoringTask, ExtractedLinks, 
@@ -21,6 +23,9 @@ from .serializers import (
     DailyScraperLinksSerializer, CompetitorHTMLSerializer, CompetitorMetadataSerializer,
     HTMLSnapshotSerializer, HTMLDifferenceSerializer
 )
+from utils.validators import validate_url_exists
+
+logger = logging.getLogger(__name__)
 
 
 class RegisterView(generics.CreateAPIView):
@@ -86,75 +91,123 @@ class CompetitorViewSet(viewsets.ModelViewSet):
         """Return competitors for the current user only."""
         return Competitor.objects.filter(user=self.request.user, is_deleted=False)
     
+    def _validate_urls(self, data):
+        """
+        Validate that all provided URLs actually exist.
+        Auto-normalizes URLs (prepends https:// if missing).
+        Returns (valid_urls_dict, errors_list).
+        """
+        url_fields = ['website_base_url', 'linkedin_url', 'facebook_url', 'instagram_url', 'twitter_url']
+        errors = []
+        validated = {}
+        
+        for field in url_fields:
+            url = data.get(field)
+            if url and url.strip():
+                url = url.strip()
+                is_valid, result = validate_url_exists(url)
+                if not is_valid:
+                    errors.append(result)
+                else:
+                    # result is the normalized URL (with https:// prepended if needed)
+                    validated[field] = result
+            else:
+                validated[field] = None
+        
+        return validated, errors
+    
+    def _find_existing_competitor(self, user, validated_urls):
+        """
+        Check if any of the provided URLs already belong to a competitor for this user.
+        Returns (competitor_or_none, matching_field_or_none, was_deleted).
+        """
+        url_fields = ['website_base_url', 'linkedin_url', 'facebook_url', 'instagram_url', 'twitter_url']
+        
+        for field in url_fields:
+            url = validated_urls.get(field)
+            if url:
+                existing = Competitor.objects.filter(
+                    user=user, **{field: url}
+                ).first()
+                if existing:
+                    return existing, field, existing.is_deleted
+        
+        return None, None, False
+    
+    def _extract_and_check_links(self, competitor):
+        """
+        Call Firecrawl to extract subpage links. Returns result dict.
+        Enforces MAX_COMPETITOR_LINKS limit.
+        """
+        from apps.scraping.tasks import extract_competitor_links_sync
+        return extract_competitor_links_sync(competitor.id)
+
     def create(self, request, *args, **kwargs):
-        """Create or update competitor with duplicate checking."""
+        """Create competitor with URL validation and automatic link extraction."""
         serializer = CompetitorCreateUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         data = serializer.validated_data
         user = request.user
         
-        # Check if competitor exists by website_base_url or other URLs
-        # Important: Check for both deleted and non-deleted competitors
-        existing_competitor = None
-        was_deleted = False
+        # Step 1: Validate all provided URLs actually exist
+        validated_urls, url_errors = self._validate_urls(data)
+        if url_errors:
+            return Response({
+                'error': 'One or more URLs are invalid or unreachable',
+                'details': url_errors
+            }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Try to find by website URL (including soft-deleted ones)
-        if data.get('website_base_url'):
-            existing_competitor = Competitor.objects.filter(
-                user=user,
-                website_base_url=data['website_base_url']
-            ).first()
-            
-            if existing_competitor and existing_competitor.is_deleted:
-                was_deleted = True
+        # Ensure at least one valid URL was provided
+        if not any(validated_urls.values()):
+            return Response({
+                'error': 'At least one valid URL must be provided'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
-        # If not found by website, try to find by other social media URLs
-        if not existing_competitor:
-            query = Q()
-            if data.get('linkedin_url'):
-                query |= Q(linkedin_url=data['linkedin_url'])
-            if data.get('facebook_url'):
-                query |= Q(facebook_url=data['facebook_url'])
-            if data.get('instagram_url'):
-                query |= Q(instagram_url=data['instagram_url'])
-            if data.get('twitter_url'):
-                query |= Q(twitter_url=data['twitter_url'])
-            
-            if query:
-                existing_competitor = Competitor.objects.filter(
-                    query, user=user
-                ).first()
-                
-                if existing_competitor and existing_competitor.is_deleted:
-                    was_deleted = True
+        # Step 2: Check if any URL already belongs to this user's competitor
+        existing_competitor, match_field, was_deleted = self._find_existing_competitor(user, validated_urls)
         
         if existing_competitor:
-            # If competitor was soft-deleted, restore it
             if was_deleted:
+                # Restore soft-deleted competitor and update with new data
                 existing_competitor.is_deleted = False
                 existing_competitor.deleted_at = None
-                # Update with new data
                 existing_competitor.name = data['name']
-                for field in ['website_base_url', 'linkedin_url', 'facebook_url', 'instagram_url', 'twitter_url']:
-                    setattr(existing_competitor, field, data.get(field) or None)
+                for field, url in validated_urls.items():
+                    setattr(existing_competitor, field, url)
                 existing_competitor.save()
                 
-                return Response({
+                # Auto-extract links if website_base_url is present
+                link_result = None
+                if existing_competitor.website_base_url:
+                    link_result = self._extract_and_check_links(existing_competitor)
+                    if link_result.get('status') == 'error' and 'exceeds the maximum' in link_result.get('message', ''):
+                        # Too many links — delete the restored competitor and inform user
+                        existing_competitor.is_deleted = True
+                        existing_competitor.deleted_at = timezone.now()
+                        existing_competitor.save()
+                        return Response({
+                            'error': link_result['message'],
+                            'links_count': link_result.get('links_count', 0)
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                
+                response_data = {
                     'message': 'Competitor restored and updated successfully',
                     'competitor': CompetitorSerializer(existing_competitor).data,
                     'created': False,
                     'restored': True
-                }, status=status.HTTP_200_OK)
+                }
+                if link_result and link_result.get('status') == 'success':
+                    response_data['links_extracted'] = link_result['links_count']
+                return Response(response_data, status=status.HTTP_200_OK)
             
-            # Update existing active competitor with new URLs if provided
+            # Active competitor already exists with a matching URL
             updated = False
-            for field in ['website_base_url', 'linkedin_url', 'facebook_url', 'instagram_url', 'twitter_url']:
-                if data.get(field) and not getattr(existing_competitor, field):
-                    setattr(existing_competitor, field, data[field])
+            for field, url in validated_urls.items():
+                if url and not getattr(existing_competitor, field):
+                    setattr(existing_competitor, field, url)
                     updated = True
             
-            # Update name if different
             if data.get('name') and data['name'] != existing_competitor.name:
                 existing_competitor.name = data['name']
                 updated = True
@@ -162,33 +215,54 @@ class CompetitorViewSet(viewsets.ModelViewSet):
             if updated:
                 existing_competitor.save()
                 return Response({
-                    'message': 'Competitor updated successfully',
+                    'message': f'Competitor already exists (matched on {match_field}). Updated with new details.',
                     'competitor': CompetitorSerializer(existing_competitor).data,
                     'created': False
                 }, status=status.HTTP_200_OK)
             else:
                 return Response({
-                    'message': 'Competitor already exists with these details',
+                    'message': f'Competitor already exists with these details (matched on {match_field})',
                     'competitor': CompetitorSerializer(existing_competitor).data,
                     'created': False
                 }, status=status.HTTP_200_OK)
-        else:
-            # Create new competitor
-            competitor = Competitor.objects.create(
-                user=user,
-                name=data['name'],
-                website_base_url=data.get('website_base_url') or None,
-                linkedin_url=data.get('linkedin_url') or None,
-                facebook_url=data.get('facebook_url') or None,
-                instagram_url=data.get('instagram_url') or None,
-                twitter_url=data.get('twitter_url') or None
-            )
-            
-            return Response({
-                'message': 'Competitor created successfully',
-                'competitor': CompetitorSerializer(competitor).data,
-                'created': True
-            }, status=status.HTTP_201_CREATED)
+        
+        # Step 3: Create new competitor
+        competitor = Competitor.objects.create(
+            user=user,
+            name=data['name'],
+            website_base_url=validated_urls.get('website_base_url'),
+            linkedin_url=validated_urls.get('linkedin_url'),
+            facebook_url=validated_urls.get('facebook_url'),
+            instagram_url=validated_urls.get('instagram_url'),
+            twitter_url=validated_urls.get('twitter_url')
+        )
+        
+        # Step 4: Auto-extract subpage links if website_base_url is provided
+        link_result = None
+        if competitor.website_base_url:
+            link_result = self._extract_and_check_links(competitor)
+            if link_result.get('status') == 'error' and 'exceeds the maximum' in link_result.get('message', ''):
+                # Too many links — remove the competitor and inform user
+                competitor.delete()
+                return Response({
+                    'error': link_result['message'],
+                    'links_count': link_result.get('links_count', 0)
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        response_data = {
+            'message': 'Competitor created successfully',
+            'competitor': CompetitorSerializer(competitor).data,
+            'created': True
+        }
+        if link_result:
+            if link_result.get('status') == 'success':
+                response_data['links_extracted'] = link_result['links_count']
+            elif link_result.get('status') == 'warning':
+                response_data['links_warning'] = link_result.get('message')
+            elif link_result.get('status') == 'error':
+                response_data['links_error'] = link_result.get('message')
+        
+        return Response(response_data, status=status.HTTP_201_CREATED)
     
     def update(self, request, *args, **kwargs):
         """Update competitor information (PUT request - full update)."""
