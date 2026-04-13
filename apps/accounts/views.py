@@ -85,6 +85,70 @@ class RolePermissionView(APIView):
 
 
 # ---------------------------------------------------------------------------
+# My Permissions View
+# Accessible by: any authenticated user
+# Returns:       the logged-in user's own page-level permissions from DB
+# ---------------------------------------------------------------------------
+
+class MyPermissionsView(APIView):
+    """
+    GET /api/accounts/me/permissions/
+    Returns the current user's permissions derived from their assigned role.
+    No special permission required — every logged-in user can call this.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            profile = request.user.profile
+        except UserProfile.DoesNotExist:
+            return Response(
+                {'detail': 'User profile not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if profile.user_type == 'super_admin':
+            return Response({
+                'dashboard': True,
+                'competitors': True,
+                'ai_assistant': True,
+                'reports': True,
+                'settings': True,
+                'user_type': 'super_admin',
+            })
+
+        if profile.role is None:
+            return Response({
+                'dashboard': False,
+                'competitors': False,
+                'ai_assistant': False,
+                'reports': False,
+                'settings': False,
+                'user_type': profile.user_type,
+            })
+
+        try:
+            perms = profile.role.permissions
+            return Response({
+                'dashboard': perms.dashboard,
+                'competitors': perms.competitors,
+                'ai_assistant': perms.ai_assistant,
+                'reports': perms.reports,
+                'settings': perms.settings,
+                'user_type': profile.user_type,
+            })
+        except RolePermission.DoesNotExist:
+            return Response({
+                'dashboard': False,
+                'competitors': False,
+                'ai_assistant': False,
+                'reports': False,
+                'settings': False,
+                'user_type': profile.user_type,
+            })
+
+
+# ---------------------------------------------------------------------------
 # User Views
 # Accessible by: super_admin + users with settings=True role permission
 # Scoped to:     users created by the current user (created_by=request.user)

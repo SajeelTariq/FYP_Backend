@@ -3,6 +3,12 @@ from . import views
 
 urlpatterns = [
     # ------------------------------------------------------------------
+    # Current user's own permissions (no special permission required)
+    # GET  /api/accounts/me/permissions/  → returns own role permissions
+    # ------------------------------------------------------------------
+    path('me/permissions/', views.MyPermissionsView.as_view(), name='my-permissions'),
+
+    # ------------------------------------------------------------------
     # Role endpoints
     # POST   /api/accounts/roles/                  → create role
     # GET    /api/accounts/roles/                  → list my roles
