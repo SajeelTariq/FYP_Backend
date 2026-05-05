@@ -105,3 +105,4 @@ htmlcov/
 dmypy.json
 
 continuation_prompt.txt
+caude_session.txt

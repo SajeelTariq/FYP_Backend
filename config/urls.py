@@ -13,6 +13,7 @@ urlpatterns = [
     path('api/scraping/', include('apps.scraping.urls')),
     path('api/rag/', include('apps.rag.urls')),
     path('api/analytics/', include('apps.analytics.urls')),
+    path('api/social-media/', include('apps.social_media.urls')),
 ]
 
 if settings.DEBUG:

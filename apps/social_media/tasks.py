@@ -1,0 +1,248 @@
+"""
+Celery tasks for LinkedIn social media scraping.
+Runs separately from the website scraping pipeline.
+"""
+import logging
+from datetime import datetime, timezone
+
+from celery import shared_task
+from django.utils import timezone as dj_timezone
+
+logger = logging.getLogger(__name__)
+
+
+@shared_task
+def run_linkedin_monitoring():
+    """
+    Daily task: scrape LinkedIn for every competitor that has a linkedin_url.
+    Registered in celery.py to run at 3 AM daily (1 hour after website scraping).
+    """
+    from apps.monitoring.models import Competitor
+
+    competitors = (
+        Competitor.objects
+        .filter(is_deleted=False)
+        .exclude(linkedin_url__isnull=True)
+        .exclude(linkedin_url='')
+    )
+
+    if not competitors.exists():
+        logger.info("[LinkedIn] No competitors with a LinkedIn URL — skipping.")
+        return {"status": "skipped", "message": "No competitors have a LinkedIn URL"}
+
+    results = {}
+    for comp in competitors:
+        logger.info(f"[LinkedIn] ══ Starting for {comp.name} ══")
+        try:
+            result = _scrape_competitor_linkedin(comp)
+            results[comp.name] = result
+        except Exception as e:
+            logger.error(f"[LinkedIn] Failed for {comp.name}: {e}")
+            results[comp.name] = {"status": "error", "error": str(e)}
+
+    logger.info(f"[LinkedIn] Finished all: {list(results.keys())}")
+    return results
+
+
+@shared_task
+def scrape_linkedin_for_competitor(competitor_id: int):
+    """
+    Scrape LinkedIn for a single competitor by ID.
+    Call this manually via management command or API for targeted runs.
+    """
+    from apps.monitoring.models import Competitor
+
+    try:
+        comp = Competitor.objects.get(id=competitor_id, is_deleted=False)
+    except Competitor.DoesNotExist:
+        logger.error(f"[LinkedIn] Competitor id={competitor_id} not found.")
+        return {"status": "error", "error": "Competitor not found"}
+
+    return _scrape_competitor_linkedin(comp)
+
+
+# ------------------------------------------------------------------
+# Internal logic (not Celery tasks)
+# ------------------------------------------------------------------
+
+def _scrape_competitor_linkedin(competitor) -> dict:
+    """Run the full LinkedIn scrape (company data + jobs) for one competitor."""
+    from apps.social_media.services.apify_service import ApifyService, ApifyError
+
+    if not competitor.linkedin_url:
+        return {"status": "skipped", "reason": "No LinkedIn URL"}
+
+    try:
+        service = ApifyService()
+    except ApifyError as e:
+        logger.error(f"[LinkedIn] Apify init failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+    result = {}
+
+    # --- Company data + posts ---
+    try:
+        company_data = service.scrape_linkedin_company(competitor.linkedin_url)
+        posts_saved = _save_posts(competitor, company_data['posts'])
+        snapshot_saved = _save_snapshot(
+            competitor,
+            company_data['follower_count'],
+            company_data['employee_count'],
+        )
+        result['posts'] = {"saved": posts_saved, "total": len(company_data['posts'])}
+        result['snapshot'] = snapshot_saved
+    except Exception as e:
+        logger.error(f"[LinkedIn] Company scrape failed for {competitor.name}: {e}")
+        result['posts'] = {"error": str(e)}
+
+    # --- Job listings ---
+    try:
+        jobs_raw = service.scrape_linkedin_jobs(competitor.name, competitor.linkedin_url)
+        jobs_result = _save_jobs(competitor, jobs_raw)
+        result['jobs'] = jobs_result
+    except Exception as e:
+        logger.error(f"[LinkedIn] Jobs scrape failed for {competitor.name}: {e}")
+        result['jobs'] = {"error": str(e)}
+
+    result['status'] = 'success'
+    return result
+
+
+def _save_posts(competitor, posts: list) -> int:
+    """
+    Save new posts to DB. Skips posts already in DB (deduplication via post_id).
+    Returns count of newly saved posts.
+    """
+    from apps.social_media.models import SocialMediaPost
+
+    saved = 0
+    for p in posts:
+        post_id = p.get('post_id', '').strip()
+        if not post_id:
+            continue
+
+        posted_at = _parse_dt(p.get('posted_at'))
+
+        _, created = SocialMediaPost.objects.get_or_create(
+            competitor=competitor,
+            platform='linkedin',
+            post_id=post_id,
+            defaults={
+                'content': p.get('content', ''),
+                'post_type': p.get('post_type', 'post'),
+                'post_url': p.get('post_url') or None,
+                'posted_at': posted_at,
+                'author_name': p.get('author_name', ''),
+                'author_headline': p.get('author_headline', ''),
+                'num_likes': p.get('num_likes', 0),
+                'num_comments': p.get('num_comments', 0),
+                'num_shares': p.get('num_shares', 0),
+            },
+        )
+        if created:
+            saved += 1
+
+    logger.info(f"[LinkedIn] {competitor.name}: {saved}/{len(posts)} new posts saved")
+    return saved
+
+
+def _save_jobs(competitor, jobs: list) -> dict:
+    """
+    Upsert job listings.
+    - New jobs: created with is_new=True
+    - Existing jobs: updated last_seen_at, is_active=True, is_new=False
+    - Jobs not in this scrape: marked is_active=False
+    Returns a summary dict.
+    """
+    from apps.social_media.models import JobPosting
+
+    scraped_ids = set()
+    new_count = 0
+    updated_count = 0
+
+    for j in jobs:
+        job_id = str(j.get('job_id', '')).strip()
+        if not job_id:
+            continue
+
+        scraped_ids.add(job_id)
+        posted_at = _parse_dt(j.get('posted_at'))
+
+        existing = JobPosting.objects.filter(competitor=competitor, job_id=job_id).first()
+        if existing:
+            existing.is_active = True
+            existing.is_new = False
+            existing.last_seen_at = dj_timezone.now()
+            existing.save(update_fields=['is_active', 'is_new', 'last_seen_at'])
+            updated_count += 1
+        else:
+            JobPosting.objects.create(
+                competitor=competitor,
+                job_id=job_id,
+                title=j.get('title', ''),
+                location=j.get('location', ''),
+                employment_type=j.get('employment_type', ''),
+                seniority_level=j.get('seniority_level', ''),
+                job_function=j.get('job_function', ''),
+                industries=j.get('industries', ''),
+                description=j.get('description', ''),
+                job_url=j.get('job_url') or None,
+                apply_url=j.get('apply_url') or None,
+                posted_at=posted_at,
+                is_new=True,
+                is_active=True,
+            )
+            new_count += 1
+
+    # Mark jobs that disappeared as inactive
+    deactivated = (
+        JobPosting.objects
+        .filter(competitor=competitor, is_active=True)
+        .exclude(job_id__in=scraped_ids)
+        .update(is_active=False)
+    )
+
+    logger.info(
+        f"[LinkedIn] {competitor.name} jobs — new={new_count}, updated={updated_count}, deactivated={deactivated}"
+    )
+    return {"new": new_count, "updated": updated_count, "deactivated": deactivated}
+
+
+def _save_snapshot(competitor, follower_count, employee_count) -> dict:
+    """Record a daily follower/employee count snapshot."""
+    from apps.social_media.models import SocialMediaSnapshot
+
+    if follower_count is None and employee_count is None:
+        return {"saved": False, "reason": "No count data returned"}
+
+    SocialMediaSnapshot.objects.create(
+        competitor=competitor,
+        platform='linkedin',
+        follower_count=follower_count,
+        employee_count=employee_count,
+    )
+    logger.info(
+        f"[LinkedIn] {competitor.name} snapshot — followers={follower_count}, employees={employee_count}"
+    )
+    return {"saved": True, "follower_count": follower_count, "employee_count": employee_count}
+
+
+def _parse_dt(value) -> datetime | None:
+    """Best-effort parse of a datetime string or timestamp into an aware datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+        except Exception:
+            return None
+    if isinstance(value, str):
+        for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%d'):
+            try:
+                dt = datetime.strptime(value, fmt)
+                return dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+    return None
