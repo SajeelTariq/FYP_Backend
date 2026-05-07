@@ -14,6 +14,7 @@ urlpatterns = [
     path('api/rag/', include('apps.rag.urls')),
     path('api/analytics/', include('apps.analytics.urls')),
     path('api/social-media/', include('apps.social_media.urls')),
+    path('api/reports/', include('apps.reports.urls')),
 ]
 
 if settings.DEBUG:
