@@ -25,6 +25,9 @@ APIFY_JOBS_ACTOR_ID = os.getenv('APIFY_JOBS_ACTOR_ID', 'hKByXkMQaC5Qt9UMN')
 # OpenRouter API Configuration (used by Agno agents)
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
 
+# OpenAI API Configuration
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+
 # Maximum number of subpage links allowed per competitor
 MAX_COMPETITOR_LINKS = int(os.getenv('MAX_COMPETITOR_LINKS', '500'))
 
@@ -56,6 +59,7 @@ INSTALLED_APPS = [
     'apps.rag',
     'apps.analytics',
     'apps.social_media',
+    'apps.reports',
 ]
 
 MIDDLEWARE = [
