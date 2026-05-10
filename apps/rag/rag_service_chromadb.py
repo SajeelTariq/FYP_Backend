@@ -478,26 +478,26 @@ Instructions:
 
 Answer:"""
 
-        # Call OpenRouter API
-        api_key = settings.OPENROUTER_API_KEY
-        
+        # Call OpenAI API
+        api_key = settings.OPENAI_API_KEY
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        
+
         payload = {
-            "model": "openai/gpt-4o-mini",
+            "model": "gpt-4o-mini",
             "messages": [
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.7,
             "max_tokens": 1000
         }
-        
+
         try:
             response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
+                "https://api.openai.com/v1/chat/completions",
                 headers=headers,
                 json=payload,
                 timeout=30

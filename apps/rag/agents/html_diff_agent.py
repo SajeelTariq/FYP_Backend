@@ -7,7 +7,7 @@ from typing import Dict, Any, List
 from datetime import datetime, timedelta
 from django.utils import timezone
 from agno.agent import Agent
-from agno.models.openrouter import OpenRouter
+from agno.models.openai import OpenAIChat
 
 from apps.monitoring.models import HTMLDifference, Competitor
 from django.contrib.auth.models import User
@@ -24,10 +24,10 @@ class HTMLDiffAgent:
         self.name = "HTMLDiffFinder"
         self.execution_history = []
         
-        # Create Agno agent with instructions (using OpenRouter with GPT-4o-mini)
+        # Create Agno agent with instructions (using OpenAI GPT-4o-mini)
         self.agent = Agent(
             name="HTML Difference Finder Agent",
-            model=OpenRouter(id="openai/gpt-4o-mini", api_key=api_key),
+            model=OpenAIChat(id="gpt-4o-mini", api_key=api_key),
             instructions=[
                 "You are a specialist in tracking and reporting website changes.",
                 "Help users understand what changes occurred on competitor websites.",
