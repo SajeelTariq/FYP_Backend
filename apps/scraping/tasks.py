@@ -487,9 +487,9 @@ def scrape_all_competitors():
 # ──────────────────────────────────────────────────────────────────────
 
 
-def _call_openrouter_llm(prompt: str) -> str:
-    """Call OpenRouter API (GPT-4o-mini) to generate a summary."""
-    api_key = settings.OPENROUTER_API_KEY
+def _call_openai_llm(prompt: str) -> str:
+    """Call OpenAI API (GPT-4o-mini) to generate a summary."""
+    api_key = settings.OPENAI_API_KEY
     if not api_key:
         return "LLM summary unavailable (no API key configured)"
 
@@ -498,14 +498,14 @@ def _call_openrouter_llm(prompt: str) -> str:
         "Content-Type": "application/json",
     }
     payload = {
-        "model": "openai/gpt-4o-mini",
+        "model": "gpt-4o-mini",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.5,
         "max_tokens": 600,
     }
     try:
         resp = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            "https://api.openai.com/v1/chat/completions",
             headers=headers,
             json=payload,
             timeout=30,
@@ -513,7 +513,7 @@ def _call_openrouter_llm(prompt: str) -> str:
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        logger.error(f"OpenRouter LLM error: {e}")
+        logger.error(f"OpenAI LLM error: {e}")
         return f"LLM summary generation failed: {e}"
 
 
@@ -806,7 +806,7 @@ def _step3_detect_changes_and_summarize(competitor, urls_to_check):
             "of what changed on this page. Focus on meaningful content changes, "
             "ignoring minor formatting/whitespace."
         )
-        llm_summary = _call_openrouter_llm(llm_prompt)
+        llm_summary = _call_openai_llm(llm_prompt)
 
         is_significant = (added_count + removed_count) > 5
 

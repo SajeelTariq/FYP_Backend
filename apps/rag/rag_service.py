@@ -286,18 +286,18 @@ User Question: {query}
 
 Please provide a detailed answer based on the above context."""
 
-        # Call OpenRouter API
+        # Call OpenAI API
         try:
-            api_key = settings.OPENROUTER_API_KEY
-            
+            api_key = settings.OPENAI_API_KEY
+
             response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
+                "https://api.openai.com/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "openai/gpt-4o-mini",
+                    "model": "gpt-4o-mini",
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}

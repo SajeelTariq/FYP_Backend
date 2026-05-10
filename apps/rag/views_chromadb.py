@@ -19,8 +19,8 @@ def get_orchestrator():
     """Get or create the Agno orchestrator agent."""
     global _orchestrator
     if _orchestrator is None:
-        # Get OpenRouter API key from settings
-        api_key = getattr(settings, 'OPENROUTER_API_KEY', os.getenv('OPENROUTER_API_KEY'))
+        # Get OpenAI API key from settings
+        api_key = getattr(settings, 'OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))
         
         # Create orchestrator with Agno agents
         _orchestrator = OrchestratorAgent(api_key=api_key)

@@ -4,7 +4,7 @@ General Query Agent - Handles standard RAG queries using Agno framework.
 import time
 from typing import Dict, Any
 from agno.agent import Agent
-from agno.models.openrouter import OpenRouter
+from agno.models.openai import OpenAIChat
 
 from ..rag_service_chromadb import RAGServiceChroma
 
@@ -21,10 +21,10 @@ class GeneralQueryAgent:
         self.name = "GeneralQuery"
         self.execution_history = []
         
-        # Create Agno agent with instructions (using OpenRouter with GPT-4o-mini)
+        # Create Agno agent with instructions (using OpenAI GPT-4o-mini)
         self.agent = Agent(
             name="General Query Agent",
-            model=OpenRouter(id="openai/gpt-4o-mini", api_key=api_key),
+            model=OpenAIChat(id="gpt-4o-mini", api_key=api_key),
             instructions=[
                 "You are a helpful assistant specialized in answering questions about automotive products.",
                 "Use the provided competitor information to answer user queries accurately.",
