@@ -25,16 +25,28 @@ class ReportListSerializer(serializers.ModelSerializer):
 
 class GenerateReportSerializer(serializers.Serializer):
     report_type = serializers.ChoiceField(choices=['executive', 'analyst'])
-    days = serializers.IntegerField(min_value=1, max_value=7, help_text="1 to 7 days")
+    period_start = serializers.DateField(help_text="Start date (YYYY-MM-DD)")
+    period_end = serializers.DateField(help_text="End date (YYYY-MM-DD)")
     competitor_ids = serializers.ListField(
         child=serializers.IntegerField(),
-        required=False,
+        required=True,
         allow_empty=True,
-        help_text="Leave empty to include all competitors",
+        help_text="List of competitor IDs. Pass an empty array [] to include all competitors.",
     )
 
+    def validate(self, data):
+        start = data.get('period_start')
+        end = data.get('period_end')
+
+        if start and end:
+            if end < start:
+                raise serializers.ValidationError("period_end must be after period_start.")
+            if (end - start).days > 30:
+                raise serializers.ValidationError("Date range cannot exceed 30 days.")
+            if end > date.today():
+                raise serializers.ValidationError("period_end cannot be in the future.")
+
+        return data
+
     def get_period(self) -> tuple[date, date]:
-        days = self.validated_data['days']
-        end = date.today()
-        start = end - timedelta(days=days - 1)
-        return start, end
+        return self.validated_data['period_start'], self.validated_data['period_end']
