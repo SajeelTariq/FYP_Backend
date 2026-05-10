@@ -47,7 +47,8 @@ curl -X POST http://127.0.0.1:8000/api/reports/generate/ \
   -H "Content-Type: application/json" \
   -d '{
     "report_type": "executive",
-    "days": 7,
+    "period_start": "2026-04-10",
+    "period_end": "2026-05-10",
     "competitor_ids": []
   }'
 ```
@@ -57,8 +58,14 @@ curl -X POST http://127.0.0.1:8000/api/reports/generate/ \
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `report_type` | string | Yes | `"executive"` or `"analyst"` |
-| `days` | integer | Yes | `1` to `7` — report period in days |
-| `competitor_ids` | array | No | List of competitor IDs. Empty array `[]` = all competitors |
+| `period_start` | string | Yes | Start date in `YYYY-MM-DD` format |
+| `period_end` | string | Yes | End date in `YYYY-MM-DD` format (max 30 days after `period_start`, cannot be in the future) |
+| `competitor_ids` | array | Yes | List of competitor IDs. Empty array `[]` = all competitors |
+
+**Validation Rules:**
+- `period_end` must be on or after `period_start`
+- Date range cannot exceed 30 days
+- `period_end` cannot be in the future
 
 **Response `202 Accepted`:**
 ```json
@@ -66,8 +73,8 @@ curl -X POST http://127.0.0.1:8000/api/reports/generate/ \
   "message": "Report generation started.",
   "report_id": 8,
   "status": "pending",
-  "period_start": "2026-05-01",
-  "period_end": "2026-05-07"
+  "period_start": "2026-04-10",
+  "period_end": "2026-05-10"
 }
 ```
 
@@ -187,7 +194,7 @@ curl -X GET http://127.0.0.1:8000/api/reports/8/ \
 
 ```
 1. User selects report type (Executive / Analyst)
-2. User selects days (1–7) via slider or dropdown
+2. User picks a start date and end date (max 30-day range, end date cannot be in the future)
 3. User clicks "Generate Report"
 
    POST /api/reports/generate/
