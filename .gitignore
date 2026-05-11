@@ -107,3 +107,7 @@ dmypy.json
 continuation_prompt.txt
 caude_session.txt
 venv310
+
+# FYP internal team documents
+FYP_Task_Board.xlsx
+generate_task_board.py
