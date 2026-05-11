@@ -234,7 +234,8 @@ class CompetitorViewSet(viewsets.ModelViewSet):
             linkedin_url=validated_urls.get('linkedin_url'),
             facebook_url=validated_urls.get('facebook_url'),
             instagram_url=validated_urls.get('instagram_url'),
-            twitter_url=validated_urls.get('twitter_url')
+            twitter_url=validated_urls.get('twitter_url'),
+            stock_symbol=data.get('stock_symbol') or None,
         )
         
         # Step 4: Auto-extract subpage links if website_base_url is provided
@@ -291,7 +292,7 @@ class CompetitorViewSet(viewsets.ModelViewSet):
         competitor = self.get_object()
         
         # Get the fields that are provided in the request
-        allowed_fields = ['name', 'website_base_url', 'linkedin_url', 'facebook_url', 'instagram_url', 'twitter_url']
+        allowed_fields = ['name', 'website_base_url', 'linkedin_url', 'facebook_url', 'instagram_url', 'twitter_url', 'stock_symbol']
         update_data = {key: value for key, value in request.data.items() if key in allowed_fields}
         
         if not update_data:
