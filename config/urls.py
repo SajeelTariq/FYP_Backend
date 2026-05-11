@@ -15,6 +15,7 @@ urlpatterns = [
     path('api/analytics/', include('apps.analytics.urls')),
     path('api/social-media/', include('apps.social_media.urls')),
     path('api/reports/', include('apps.reports.urls')),
+    path('api/dashboard/', include('apps.dashboard.urls')),
 ]
 
 if settings.DEBUG:

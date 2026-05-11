@@ -16,6 +16,10 @@ class Competitor(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
+    stock_symbol = models.CharField(
+        max_length=20, blank=True, null=True,
+        help_text="Stock ticker symbol (e.g. CRM, MSFT) for FMP data"
+    )
 
     class Meta:
         ordering = ['-created_at']

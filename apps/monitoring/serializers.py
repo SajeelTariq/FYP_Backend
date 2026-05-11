@@ -40,9 +40,9 @@ class CompetitorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Competitor
         fields = [
-            'id', 'name', 'website_base_url', 'linkedin_url', 
+            'id', 'name', 'website_base_url', 'linkedin_url',
             'facebook_url', 'instagram_url', 'twitter_url',
-            'is_deleted', 'created_at', 'updated_at'
+            'stock_symbol', 'is_deleted', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
@@ -70,6 +70,7 @@ class CompetitorCreateUpdateSerializer(serializers.Serializer):
     facebook_url = serializers.CharField(required=False, allow_blank=True, max_length=2000)
     instagram_url = serializers.CharField(required=False, allow_blank=True, max_length=2000)
     twitter_url = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    stock_symbol = serializers.CharField(required=False, allow_blank=True, max_length=20)
 
     def validate(self, data):
         # At least one URL must be provided
