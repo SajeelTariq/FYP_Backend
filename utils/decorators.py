@@ -87,7 +87,7 @@ def require_active_competitor(func):
         # Get competitor from kwargs
         competitor = kwargs.get('competitor')
         
-        if competitor and not competitor.is_active:
+        if competitor and competitor.is_deleted:
             return Response(
                 {
                     "success": False,

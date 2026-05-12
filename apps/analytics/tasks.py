@@ -14,7 +14,7 @@ def update_competitor_analytics():
     from apps.monitoring.models import Competitor
     
     try:
-        competitors = Competitor.objects.filter(is_active=True)
+        competitors = Competitor.objects.filter(is_deleted=False)
         
         for competitor in competitors:
             # TODO: Implement analytics calculation
