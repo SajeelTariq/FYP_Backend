@@ -7,7 +7,7 @@ class ReportSerializer(serializers.ModelSerializer):
     class Meta:
         model = Report
         fields = [
-            'id', 'report_type', 'status', 'period_start', 'period_end',
+            'id', 'title', 'report_type', 'status', 'period_start', 'period_end',
             'content', 'error_message', 'created_at', 'completed_at',
         ]
         read_only_fields = ['id', 'status', 'content', 'error_message', 'created_at', 'completed_at']
@@ -18,12 +18,13 @@ class ReportListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Report
         fields = [
-            'id', 'report_type', 'status', 'period_start', 'period_end',
+            'id', 'title', 'report_type', 'status', 'period_start', 'period_end',
             'created_at', 'completed_at',
         ]
 
 
 class GenerateReportSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=255, required=True, help_text="Report title")
     report_type = serializers.ChoiceField(choices=['executive', 'analyst'])
     period_start = serializers.DateField(help_text="Start date (YYYY-MM-DD)")
     period_end = serializers.DateField(help_text="End date (YYYY-MM-DD)")

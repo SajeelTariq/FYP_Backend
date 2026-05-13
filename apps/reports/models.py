@@ -16,6 +16,7 @@ class Report(models.Model):
     ]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reports')
+    title = models.CharField(max_length=255, blank=True, default='')
     report_type = models.CharField(max_length=20, choices=REPORT_TYPE_CHOICES)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     period_start = models.DateField()
