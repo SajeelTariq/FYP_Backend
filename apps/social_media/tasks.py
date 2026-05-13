@@ -41,6 +41,15 @@ def run_linkedin_monitoring():
             results[comp.name] = {"status": "error", "error": str(e)}
 
     logger.info(f"[LinkedIn] Finished all: {list(results.keys())}")
+
+    # Send email alerts to opted-in users
+    try:
+        from apps.accounts.email_service import send_job_alerts, send_follower_change_alerts
+        send_job_alerts()
+        send_follower_change_alerts()
+    except Exception as exc:
+        logger.error(f"[LinkedIn] Email alert dispatch failed: {exc}")
+
     return results
 
 

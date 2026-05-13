@@ -7,6 +7,9 @@ urlpatterns = [
     # GET  /api/accounts/me/permissions/  → returns own role permissions
     # ------------------------------------------------------------------
     path('me/permissions/', views.MyPermissionsView.as_view(), name='my-permissions'),
+    path('me/alert-preference/', views.AlertPreferenceView.as_view(), name='alert-preference'),
+    path('me/alert-preference/test-email/', views.TestAlertEmailView.as_view(), name='test-alert-email'),
+    path('me/alerts/', views.AlertsListView.as_view(), name='alerts-list'),
 
     # ------------------------------------------------------------------
     # Role endpoints

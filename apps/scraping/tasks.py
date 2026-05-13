@@ -980,4 +980,13 @@ def run_daily_monitoring():
         results[comp.name] = comp_result
 
     logger.info(f"[DailyMonitoring] Finished all competitors: {list(results.keys())}")
+
+    # Send email alerts to opted-in users
+    try:
+        from apps.accounts.email_service import send_website_change_alerts, send_new_pages_alerts
+        send_website_change_alerts()
+        send_new_pages_alerts()
+    except Exception as exc:
+        logger.error(f"[DailyMonitoring] Email alert dispatch failed: {exc}")
+
     return {"status": "completed", "results": results}

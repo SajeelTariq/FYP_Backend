@@ -2,8 +2,13 @@
 Django settings for competitor monitoring system.
 """
 import os
+import certifi
 from pathlib import Path
 from dotenv import load_dotenv
+
+# Fix SSL certificate verification on Windows
+os.environ.setdefault('SSL_CERT_FILE', certifi.where())
+os.environ.setdefault('REQUESTS_CA_BUNDLE', certifi.where())
 
 # Load environment variables
 load_dotenv()
@@ -237,3 +242,9 @@ CACHES = {
         'LOCATION': os.getenv('CACHE_LOCATION', 'redis://127.0.0.1:6379/1'),
     }
 }
+
+# Email Configuration — SendGrid
+EMAIL_BACKEND = 'sendgrid_backend.SendgridBackend'
+SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY', '')
+SENDGRID_SANDBOX_MODE_IN_DEBUG = False
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'TrackRival <noreply@trackrival.app>')
