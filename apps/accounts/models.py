@@ -25,6 +25,7 @@ class RolePermission(models.Model):
     ai_assistant = models.BooleanField(default=False)
     reports = models.BooleanField(default=False)
     settings = models.BooleanField(default=False)
+    alerts = models.BooleanField(default=False)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
@@ -66,3 +67,19 @@ class UserProfile(models.Model):
         self.is_deleted = True
         self.deleted_at = timezone.now()
         self.save()
+
+
+class AlertPreference(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='alert_preference')
+    alert_email = models.EmailField(blank=True, null=True, help_text="Email for alerts (uses account email if blank)")
+    notify_website_changes = models.BooleanField(default=True)
+    notify_new_jobs = models.BooleanField(default=True)
+    notify_follower_change = models.BooleanField(default=True)
+    notify_new_pages = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"AlertPreference({self.user.username})"
+
+    def get_alert_email(self):
+        return self.alert_email or None

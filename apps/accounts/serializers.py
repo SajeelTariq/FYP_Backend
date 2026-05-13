@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 
-from .models import Role, RolePermission, UserProfile
+from .models import Role, RolePermission, UserProfile, AlertPreference
 
 
 # ---------------------------------------------------------------------------
@@ -11,7 +11,21 @@ from .models import Role, RolePermission, UserProfile
 class RolePermissionSerializer(serializers.ModelSerializer):
     class Meta:
         model = RolePermission
-        fields = ['dashboard', 'competitors', 'ai_assistant', 'reports', 'settings', 'updated_at']
+        fields = ['dashboard', 'competitors', 'ai_assistant', 'reports', 'settings', 'alerts', 'updated_at']
+        read_only_fields = ['updated_at']
+
+
+class AlertPreferenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AlertPreference
+        fields = [
+            'alert_email',
+            'notify_website_changes',
+            'notify_new_jobs',
+            'notify_follower_change',
+            'notify_new_pages',
+            'updated_at',
+        ]
         read_only_fields = ['updated_at']
 
 
