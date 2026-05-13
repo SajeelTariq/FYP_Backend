@@ -22,6 +22,7 @@ def generate_report(request):
 
     report = Report.objects.create(
         user=request.user,
+        title=serializer.validated_data['title'],
         report_type=serializer.validated_data['report_type'],
         status='pending',
         period_start=period_start,
@@ -70,6 +71,11 @@ def list_reports(request):
     if period in VALID_PERIODS:
         since = timezone.now() - timedelta(days=VALID_PERIODS[period])
         reports = reports.filter(created_at__gte=since)
+
+    # Search by title
+    search = request.query_params.get('search', '').strip()
+    if search:
+        reports = reports.filter(title__icontains=search)
 
     serializer = ReportListSerializer(reports, many=True)
     return Response(serializer.data)

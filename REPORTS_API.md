@@ -46,6 +46,7 @@ curl -X POST http://127.0.0.1:8000/api/reports/generate/ \
   -H "Authorization: Token <your_token_here>" \
   -H "Content-Type: application/json" \
   -d '{
+    "title": "Q4 Competitive Analysis",
     "report_type": "executive",
     "period_start": "2026-04-10",
     "period_end": "2026-05-10",
@@ -57,6 +58,7 @@ curl -X POST http://127.0.0.1:8000/api/reports/generate/ \
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `title` | string | Yes | Report title shown on frontend and used for search |
 | `report_type` | string | Yes | `"executive"` or `"analyst"` |
 | `period_start` | string | Yes | Start date in `YYYY-MM-DD` format |
 | `period_end` | string | Yes | End date in `YYYY-MM-DD` format (max 30 days after `period_start`, cannot be in the future) |
@@ -78,6 +80,9 @@ curl -X POST http://127.0.0.1:8000/api/reports/generate/ \
 }
 ```
 
+> **Note:** Celery worker must be running for report generation to proceed past `pending`.
+> Start with: `python -m celery -A config worker --loglevel=info --pool=solo`
+
 ---
 
 ### 2. Check Report Status
@@ -93,6 +98,7 @@ curl -X GET http://127.0.0.1:8000/api/reports/8/ \
 ```json
 {
   "id": 8,
+  "title": "Q4 Competitive Analysis",
   "report_type": "executive",
   "status": "completed",
   "period_start": "2026-05-01",
@@ -153,6 +159,14 @@ curl -X GET "http://127.0.0.1:8000/api/reports/?period=30" \
 # Filter by both type and period
 curl -X GET "http://127.0.0.1:8000/api/reports/?type=analyst&period=7" \
   -H "Authorization: Token <your_token_here>"
+
+# Search by title
+curl -X GET "http://127.0.0.1:8000/api/reports/?search=Q4" \
+  -H "Authorization: Token <your_token_here>"
+
+# Combine all filters
+curl -X GET "http://127.0.0.1:8000/api/reports/?type=executive&period=30&search=Q4" \
+  -H "Authorization: Token <your_token_here>"
 ```
 
 **Query Parameters:**
@@ -161,12 +175,14 @@ curl -X GET "http://127.0.0.1:8000/api/reports/?type=analyst&period=7" \
 |-------|--------|-------------|
 | `type` | `executive`, `analyst` | Filter by report type |
 | `period` | `7`, `30`, `90` | Show reports created in last N days |
+| `search` | any string | Search reports by title (case-insensitive) |
 
 **Response:**
 ```json
 [
   {
     "id": 8,
+    "title": "Q4 Competitive Analysis",
     "report_type": "executive",
     "status": "completed",
     "period_start": "2026-05-01",
@@ -193,9 +209,10 @@ curl -X GET http://127.0.0.1:8000/api/reports/8/ \
 ## Frontend Flow
 
 ```
-1. User selects report type (Executive / Analyst)
-2. User picks a start date and end date (max 30-day range, end date cannot be in the future)
-3. User clicks "Generate Report"
+1. User enters a report title
+2. User selects report type (Executive / Analyst)
+3. User picks a start date and end date (max 30-day range, end date cannot be in the future)
+4. User clicks "Generate Report"
 
    POST /api/reports/generate/
    → Save report_id from response
