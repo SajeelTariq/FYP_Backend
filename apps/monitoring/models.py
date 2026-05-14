@@ -223,3 +223,25 @@ class HTMLDifference(models.Model):
 
     def __str__(self):
         return f"{self.competitor.name} - {self.url} - {self.change_type} ({self.detected_at})"
+
+
+class NewsArticle(models.Model):
+    """News articles fetched from Google News RSS for each competitor."""
+    competitor = models.ForeignKey(Competitor, on_delete=models.CASCADE, related_name='news_articles')
+    title = models.TextField()
+    source = models.CharField(max_length=255, blank=True)
+    url = models.URLField(max_length=2000)
+    published_at = models.DateTimeField(null=True, blank=True)
+    fetched_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-published_at']
+        verbose_name = 'News Article'
+        verbose_name_plural = 'News Articles'
+        unique_together = [['competitor', 'url']]
+        indexes = [
+            models.Index(fields=['competitor', '-published_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.competitor.name} — {self.title[:60]}"

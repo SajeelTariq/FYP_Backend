@@ -25,6 +25,10 @@ app.conf.beat_schedule = {
         'task': 'apps.social_media.tasks.run_linkedin_monitoring',
         'schedule': crontab(hour=3, minute=0),  # Run daily at 3 AM (1h after website scraping)
     },
+    'fetch-competitors-news': {
+        'task': 'apps.scraping.tasks.fetch_all_competitors_news',
+        'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours
+    },
 }
 
 @app.task(bind=True)

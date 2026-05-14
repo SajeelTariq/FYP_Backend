@@ -16,7 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
-from apps.monitoring.models import Competitor, HTMLDifference
+from apps.monitoring.models import Competitor, HTMLDifference, NewsArticle
 from apps.dashboard.services.fmp import fmp_get
 
 SIX_HOURS = 60 * 60 * 6
@@ -27,6 +27,49 @@ def _get_competitor(competitor_id, user):
         return Competitor.objects.get(pk=competitor_id, user=user, is_deleted=False)
     except Competitor.DoesNotExist:
         return None
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def news_feed(request, competitor_id):
+    """
+    6.1 — Competitor News Feed
+
+    Returns articles fetched from Google News RSS, stored every 6 hours by Celery.
+
+    Query params:
+      ?days=30   (default 30)
+      ?page=1    (default 1, 20 articles per page)
+    """
+    comp = _get_competitor(competitor_id, request.user)
+    if not comp:
+        return Response({"error": "Competitor not found", "code": "NOT_FOUND"}, status=404)
+
+    days = int(request.query_params.get('days', 6))
+    page = max(1, int(request.query_params.get('page', 1)))
+    page_size = 20
+    cutoff = timezone.now() - timedelta(days=days)
+
+    qs = (
+        NewsArticle.objects
+        .filter(competitor=comp, published_at__gte=cutoff)
+        .order_by('-published_at')
+        .values('title', 'source', 'url', 'published_at', 'fetched_at')
+    )
+
+    total = qs.count()
+    offset = (page - 1) * page_size
+    articles = list(qs[offset: offset + page_size])
+
+    return Response({
+        "competitor_id": comp.pk,
+        "competitor_name": comp.name,
+        "days": days,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "articles": articles,
+    })
 
 
 @api_view(['GET'])
