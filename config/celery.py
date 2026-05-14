@@ -27,7 +27,7 @@ app.conf.beat_schedule = {
     },
     'fetch-competitors-news': {
         'task': 'apps.scraping.tasks.fetch_all_competitors_news',
-        'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours
+        'schedule': crontab(minute=0, hour='*/2'),  # Every 2 hours
     },
 }
 

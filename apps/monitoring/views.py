@@ -250,6 +250,11 @@ class CompetitorViewSet(viewsets.ModelViewSet):
                     'links_count': link_result.get('links_count', 0)
                 }, status=status.HTTP_400_BAD_REQUEST)
         
+        # Trigger one-time 6-day news backfill for new competitor
+        if competitor.website_base_url:
+            from apps.scraping.tasks import fetch_initial_competitor_news
+            fetch_initial_competitor_news.delay(competitor.id)
+
         response_data = {
             'message': 'Competitor created successfully',
             'competitor': CompetitorSerializer(competitor).data,

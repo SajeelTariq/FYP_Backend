@@ -1016,9 +1016,13 @@ def _extract_domain_query(url: str):
         return '', 'US', 'en-US'
 
 
-def _fetch_news_for_competitor(competitor):
+def _fetch_news_for_competitor(competitor, hours=2):
     """Fetch Google News RSS for a competitor using its domain name as the query.
-    Only articles from the last 6 days are persisted.
+
+    Args:
+        competitor: Competitor instance
+        hours: Only save articles published within this many hours (default 2 for
+               scheduled runs). Pass hours=144 for the initial 6-day backfill.
     """
     import feedparser
     from urllib.parse import quote_plus
@@ -1031,7 +1035,7 @@ def _fetch_news_for_competitor(competitor):
         logger.warning(f"[NewsTask] {competitor.name}: no base URL — skipping")
         return
 
-    cutoff = timezone.now() - timedelta(days=6)
+    cutoff = timezone.now() - timedelta(hours=hours)
     rss_url = (
         f"https://news.google.com/rss/search"
         f"?q={quote_plus(query_term)}&hl={hl}&gl={gl}&ceid={gl}:{hl.split('-')[0]}"
@@ -1071,10 +1075,25 @@ def _fetch_news_for_competitor(competitor):
 
 
 @shared_task
+def fetch_initial_competitor_news(competitor_id):
+    """
+    One-time backfill triggered when a new competitor is created.
+    Fetches last 6 days (144 hours) of news.
+    """
+    from apps.monitoring.models import Competitor
+    try:
+        comp = Competitor.objects.get(id=competitor_id, is_deleted=False)
+        _fetch_news_for_competitor(comp, hours=144)
+        logger.info(f"[NewsTask] Initial backfill done for {comp.name}")
+    except Competitor.DoesNotExist:
+        logger.error(f"[NewsTask] Competitor {competitor_id} not found for initial fetch")
+
+
+@shared_task
 def fetch_all_competitors_news():
     """
-    Fetch Google News RSS for every active competitor and persist articles.
-    Scheduled every 6 hours via Celery Beat.
+    Incremental news fetch — runs every 2 hours via Celery Beat.
+    Only fetches articles published in the last 2 hours.
     """
     from apps.monitoring.models import Competitor
 
@@ -1084,9 +1103,9 @@ def fetch_all_competitors_news():
         return {"status": "skipped"}
 
     for comp in competitors:
-        _fetch_news_for_competitor(comp)
+        _fetch_news_for_competitor(comp, hours=2)
 
-    logger.info(f"[NewsTask] Finished news fetch for {competitors.count()} competitors")
+    logger.info(f"[NewsTask] Incremental fetch done for {competitors.count()} competitors")
     return {"status": "completed", "competitors": competitors.count()}
 
 

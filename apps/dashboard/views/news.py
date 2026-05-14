@@ -1,20 +1,14 @@
 """
 Section 6 — News & Correlation
-
-news_feed, sentiment_trend, press_releases, social_sentiment removed —
-those endpoints require a paid FMP plan (402 Payment Required on stable API).
-
-Only news_correlation is kept: it uses HTMLDifference (DB) for web changes
-and attempts FMP news as a best-effort overlay. Works fully without FMP news.
 """
 from collections import defaultdict
 from datetime import timedelta
 
+from django.db.models import F, Min
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status
 
 from apps.monitoring.models import Competitor, HTMLDifference, NewsArticle
 from apps.dashboard.services.fmp import fmp_get
@@ -31,30 +25,44 @@ def _get_competitor(competitor_id, user):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def news_feed(request, competitor_id):
+def news_feed(request):
     """
-    6.1 — Competitor News Feed
+    6.1 — All Competitors News Feed
 
-    Returns articles fetched from Google News RSS, stored every 6 hours by Celery.
+    Returns latest news across all user's competitors in one feed,
+    sorted by published_at descending. Competitor name is included
+    on each article for the frontend to display.
 
     Query params:
-      ?days=30   (default 30)
+      ?days=6    (default 6)
       ?page=1    (default 1, 20 articles per page)
     """
-    comp = _get_competitor(competitor_id, request.user)
-    if not comp:
-        return Response({"error": "Competitor not found", "code": "NOT_FOUND"}, status=404)
-
     days = int(request.query_params.get('days', 6))
     page = max(1, int(request.query_params.get('page', 1)))
     page_size = 20
     cutoff = timezone.now() - timedelta(days=days)
 
+    competitor_ids = Competitor.objects.filter(
+        user=request.user, is_deleted=False
+    ).values_list('id', flat=True)
+
+    # Deduplicate by URL — keep one article per unique URL (lowest id wins)
+    unique_ids = (
+        NewsArticle.objects
+        .filter(competitor_id__in=competitor_ids, published_at__gte=cutoff)
+        .values('url')
+        .annotate(min_id=Min('id'))
+        .values_list('min_id', flat=True)
+    )
+
     qs = (
         NewsArticle.objects
-        .filter(competitor=comp, published_at__gte=cutoff)
+        .filter(id__in=unique_ids)
         .order_by('-published_at')
-        .values('title', 'source', 'url', 'published_at', 'fetched_at')
+        .values(
+            'title', 'source', 'url', 'published_at', 'fetched_at',
+            competitor_name=F('competitor__name'),
+        )
     )
 
     total = qs.count()
@@ -62,8 +70,6 @@ def news_feed(request, competitor_id):
     articles = list(qs[offset: offset + page_size])
 
     return Response({
-        "competitor_id": comp.pk,
-        "competitor_name": comp.name,
         "days": days,
         "total": total,
         "page": page,

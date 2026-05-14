@@ -71,7 +71,7 @@ urlpatterns = [
     path('snapshots/follower-employee-ratio/', follower_employee_ratio, name='follower-employee-ratio'),
 
     # ── Section 6 — News ──────────────────────────────────────────────────────
-    path('news/<int:competitor_id>/feed/', news_feed, name='news-feed'),
+    path('news/feed/', news_feed, name='news-feed'),
     path('news/<int:competitor_id>/correlation/', news_correlation, name='news-correlation'),
 
     # ── Section 7 — Hiring ────────────────────────────────────────────────────
