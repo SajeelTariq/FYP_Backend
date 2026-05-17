@@ -16,7 +16,7 @@ from apps.dashboard.views.social import (
     follower_growth, follower_growth_rate, platform_comparison,
     follower_employee_ratio,
 )
-from apps.dashboard.views.news import news_correlation
+from apps.dashboard.views.news import news_correlation, news_feed
 from apps.dashboard.views.search import search_symbol
 from apps.dashboard.views.hiring import (
     active_openings, hiring_trend, function_breakdown, seniority_distribution,
@@ -70,7 +70,8 @@ urlpatterns = [
     path('snapshots/platform-comparison/', platform_comparison, name='platform-comparison'),
     path('snapshots/follower-employee-ratio/', follower_employee_ratio, name='follower-employee-ratio'),
 
-    # ── Section 6 — News Correlation ──────────────────────────────────────────
+    # ── Section 6 — News ──────────────────────────────────────────────────────
+    path('news/feed/', news_feed, name='news-feed'),
     path('news/<int:competitor_id>/correlation/', news_correlation, name='news-correlation'),
 
     # ── Section 7 — Hiring ────────────────────────────────────────────────────

@@ -920,6 +920,195 @@ def _step5_update_embeddings(competitor):
         return {"added": 0, "deleted": 0, "error": str(e)}
 
 
+# ──────────────────────────────────────────────────────────────────────
+# News Fetching Pipeline (Every 6 Hours)
+# ──────────────────────────────────────────────────────────────────────
+
+
+_TLD_TO_COUNTRY = {
+    'pk': ('PK', 'en-PK', 'Pakistan'),
+    'in': ('IN', 'en-IN', 'India'),
+    'uk': ('GB', 'en-GB', 'UK'),
+    'co.uk': ('GB', 'en-GB', 'UK'),
+    'au': ('AU', 'en-AU', 'Australia'),
+    'co.au': ('AU', 'en-AU', 'Australia'),
+    'ca': ('CA', 'en-CA', 'Canada'),
+    'de': ('DE', 'de-DE', 'Germany'),
+    'fr': ('FR', 'fr-FR', 'France'),
+    'ae': ('AE', 'en-AE', 'UAE'),
+    'sa': ('SA', 'ar-SA', 'Saudi Arabia'),
+    'bd': ('BD', 'en-BD', 'Bangladesh'),
+    'ng': ('NG', 'en-NG', 'Nigeria'),
+    'za': ('ZA', 'en-ZA', 'South Africa'),
+}
+
+
+_COUNTRY_NAMES_IN_DOMAIN = {
+    'pakistan': ('PK', 'en-PK', 'Pakistan'),
+    'india':    ('IN', 'en-IN', 'India'),
+    'australia':('AU', 'en-AU', 'Australia'),
+    'canada':   ('CA', 'en-CA', 'Canada'),
+    'germany':  ('DE', 'de-DE', 'Germany'),
+    'france':   ('FR', 'fr-FR', 'France'),
+    'uae':      ('AE', 'en-AE', 'UAE'),
+    'nigeria':  ('NG', 'en-NG', 'Nigeria'),
+}
+
+_PATH_COUNTRY_CODE = {
+    'pk': ('PK', 'en-PK', 'Pakistan'),
+    'in': ('IN', 'en-IN', 'India'),
+    'gb': ('GB', 'en-GB', 'UK'),
+    'uk': ('GB', 'en-GB', 'UK'),
+    'au': ('AU', 'en-AU', 'Australia'),
+    'ca': ('CA', 'en-CA', 'Canada'),
+    'de': ('DE', 'de-DE', 'Germany'),
+    'fr': ('FR', 'fr-FR', 'France'),
+    'ae': ('AE', 'en-AE', 'UAE'),
+    'sa': ('SA', 'ar-SA', 'Saudi Arabia'),
+    'bd': ('BD', 'en-BD', 'Bangladesh'),
+    'ng': ('NG', 'en-NG', 'Nigeria'),
+    'za': ('ZA', 'en-ZA', 'South Africa'),
+}
+
+
+def _extract_domain_query(url: str):
+    """Extract domain name + country params from a URL.
+
+    Handles three patterns:
+      1. Country TLD:        honda.com.pk   → 'honda Pakistan', PK
+      2. Country in domain:  suzukipakistan.com → 'suzuki Pakistan', PK
+      3. Country in path:    kia.com/pk     → 'kia Pakistan', PK
+      4. Generic .com:       microsoft.com  → 'microsoft', US
+    """
+    try:
+        parsed = urlparse(url)
+        netloc = (parsed.netloc or url).lower().replace('www.', '')
+        parts = netloc.split('.')
+
+        # 1. Country TLD (e.g. .com.pk / .co.uk)
+        two_part = '.'.join(parts[-2:]) if len(parts) >= 2 else ''
+        one_part = parts[-1] if parts else ''
+        country_data = _TLD_TO_COUNTRY.get(two_part) or _TLD_TO_COUNTRY.get(one_part)
+        if country_data:
+            gl, hl, country_name = country_data
+            return f"{parts[0]} {country_name}", gl, hl
+
+        domain_name = parts[0]
+
+        # 2. Country name embedded in domain (e.g. suzukipakistan)
+        for keyword, (gl, hl, country_name) in _COUNTRY_NAMES_IN_DOMAIN.items():
+            if domain_name.endswith(keyword):
+                clean = domain_name[: -len(keyword)].rstrip('-')
+                return f"{clean} {country_name}", gl, hl
+
+        # 3. Country code in URL path (e.g. kia.com/pk)
+        path_parts = [p for p in parsed.path.lower().split('/') if p]
+        if path_parts:
+            country_data = _PATH_COUNTRY_CODE.get(path_parts[0])
+            if country_data:
+                gl, hl, country_name = country_data
+                return f"{domain_name} {country_name}", gl, hl
+
+        # 4. Default — global .com
+        return domain_name, 'US', 'en-US'
+
+    except Exception:
+        return '', 'US', 'en-US'
+
+
+def _fetch_news_for_competitor(competitor, hours=2):
+    """Fetch Google News RSS for a competitor using its domain name as the query.
+
+    Args:
+        competitor: Competitor instance
+        hours: Only save articles published within this many hours (default 2 for
+               scheduled runs). Pass hours=144 for the initial 6-day backfill.
+    """
+    import feedparser
+    from urllib.parse import quote_plus
+    from datetime import datetime, timedelta
+    from apps.monitoring.models import NewsArticle
+
+    base_url = competitor.website_base_url or ''
+    query_term, gl, hl = _extract_domain_query(base_url)
+    if not query_term:
+        logger.warning(f"[NewsTask] {competitor.name}: no base URL — skipping")
+        return
+
+    cutoff = timezone.now() - timedelta(hours=hours)
+    rss_url = (
+        f"https://news.google.com/rss/search"
+        f"?q={quote_plus(query_term)}&hl={hl}&gl={gl}&ceid={gl}:{hl.split('-')[0]}"
+    )
+
+    try:
+        feed = feedparser.parse(rss_url)
+        saved = 0
+        for entry in feed.entries:
+            published_at = None
+            if getattr(entry, 'published_parsed', None):
+                published_at = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+
+            # Skip articles older than 6 days
+            if published_at and published_at < cutoff:
+                continue
+
+            source = ''
+            if hasattr(entry, 'source') and isinstance(entry.source, dict):
+                source = entry.source.get('title', '')
+
+            _, created = NewsArticle.objects.get_or_create(
+                competitor=competitor,
+                url=entry.link,
+                defaults={
+                    'title': entry.title,
+                    'source': source,
+                    'published_at': published_at,
+                },
+            )
+            if created:
+                saved += 1
+
+        logger.info(f"[NewsTask] {competitor.name} (query: {query_term!r}): {saved} new articles saved")
+    except Exception as e:
+        logger.error(f"[NewsTask] Failed for {competitor.name}: {e}")
+
+
+@shared_task
+def fetch_initial_competitor_news(competitor_id):
+    """
+    One-time backfill triggered when a new competitor is created.
+    Fetches last 6 days (144 hours) of news.
+    """
+    from apps.monitoring.models import Competitor
+    try:
+        comp = Competitor.objects.get(id=competitor_id, is_deleted=False)
+        _fetch_news_for_competitor(comp, hours=144)
+        logger.info(f"[NewsTask] Initial backfill done for {comp.name}")
+    except Competitor.DoesNotExist:
+        logger.error(f"[NewsTask] Competitor {competitor_id} not found for initial fetch")
+
+
+@shared_task
+def fetch_all_competitors_news():
+    """
+    Incremental news fetch — runs every 2 hours via Celery Beat.
+    Only fetches articles published in the last 2 hours.
+    """
+    from apps.monitoring.models import Competitor
+
+    competitors = Competitor.objects.filter(is_deleted=False)
+    if not competitors.exists():
+        logger.info("[NewsTask] No active competitors — skipping.")
+        return {"status": "skipped"}
+
+    for comp in competitors:
+        _fetch_news_for_competitor(comp, hours=2)
+
+    logger.info(f"[NewsTask] Incremental fetch done for {competitors.count()} competitors")
+    return {"status": "completed", "competitors": competitors.count()}
+
+
 @shared_task
 def run_daily_monitoring():
     """
