@@ -1,8 +1,11 @@
 """
 PDF generator for competitor intelligence reports using ReportLab.
 """
+import logging
 from io import BytesIO
 from datetime import date
+
+logger = logging.getLogger(__name__)
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
@@ -254,10 +257,10 @@ def generate_pdf(report) -> bytes:
             if website_changes:
                 block.append(Paragraph('Website Changes Detail', s['subsection']))
                 for ch in website_changes:
-                    block.append(_info_row('URL', ch.get('url', '')))
-                    block.append(_info_row('Change', ch.get('change_type', '').title()))
-                    block.append(_info_row('Summary', ch.get('llm_summary', '')))
-                    block.append(_info_row('Detected', ch.get('detected_at', '')))
+                    block.append(_info_row('URL', ch.get('url') or ''))
+                    block.append(_info_row('Change', (ch.get('change_type') or '').title()))
+                    block.append(_info_row('Summary', ch.get('llm_summary') or ''))
+                    block.append(_info_row('Detected', ch.get('detected_at') or ''))
                     block.append(HRFlowable(width='100%', thickness=0.3,
                                             color=BORDER, spaceAfter=4))
 
@@ -268,10 +271,10 @@ def generate_pdf(report) -> bytes:
                 rows = [['Title', 'Location', 'Level', 'Function']]
                 for j in job_postings:
                     rows.append([
-                        j.get('title', ''),
-                        j.get('location', ''),
-                        j.get('seniority_level', ''),
-                        j.get('job_function', ''),
+                        j.get('title') or '',
+                        j.get('location') or '',
+                        j.get('seniority_level') or '',
+                        j.get('job_function') or '',
                     ])
                 tbl = Table(rows, colWidths=[6*cm, 4*cm, 3.5*cm, 3.5*cm])
                 tbl.setStyle(TableStyle([
@@ -301,4 +304,6 @@ def generate_pdf(report) -> bytes:
     ))
 
     doc.build(story)
-    return buffer.getvalue()
+    pdf_bytes = buffer.getvalue()
+    logger.info(f"PDF built — report={report.id} type={report.report_type} size={len(pdf_bytes)}B")
+    return pdf_bytes
