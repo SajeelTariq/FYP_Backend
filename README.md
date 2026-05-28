@@ -1,244 +1,91 @@
-# Competitor Monitoring System - Django Backend
+# TrackRival — Backend
 
-A comprehensive Django REST API backend for monitoring competitors, extracting data from their websites, and preparing content for RAG (Retrieval-Augmented Generation) systems.
+Django REST API backend for **TrackRival**, a competitor intelligence platform that automatically monitors competitor websites, LinkedIn activity, job postings, financial data, and news — and surfaces insights through a dashboard, alerts, and AI-generated reports.
 
-## 🎯 Overview
+## Features
 
-This backend system integrates three core scraping operations:
+- **Website monitoring** — daily scraping, HTML diff detection, significant-change detection with LLM summaries
+- **LinkedIn monitoring** — posts, job postings, follower/employee snapshots via Apify
+- **Financial data** — market cap, revenue, growth ratios, executive data via Financial Modeling Prep (FMP) API
+- **News feed** — competitor news aggregated every 2 hours
+- **AI reports** — executive and analyst PDF reports generated via LLM on any date range
+- **Alerts** — email + in-app notifications for website changes, new pages, new jobs, follower spikes
+- **Dashboard** — 40+ analytics endpoints covering website changes, social media, hiring signals, trends
+- **RBAC** — role-based access control with per-page permissions
 
-1. **Link Extraction** - Uses Firecrawl API to discover all subpages
-2. **HTML Scraping** - Uses Playwright to capture clean HTML content
-3. **Metadata Extraction** - Prepares clean text for RAG/AI systems
+## Tech Stack
 
-All data is stored in **PostgreSQL** with user-specific isolation.
+| Layer | Technology |
+|---|---|
+| Framework | Django 4.2 + Django REST Framework 3.14 |
+| Database | PostgreSQL 14+ |
+| Task queue | Celery 5 + Redis |
+| Web scraping | Playwright (HTML), Firecrawl API (links), Apify (LinkedIn) |
+| AI / LLM | OpenRouter API |
+| Financial data | Financial Modeling Prep (FMP) API |
+| Email | SendGrid |
+| Auth | Token-based (DRF) |
 
-## 🏗️ Tech Stack
-
-- **Framework**: Django 4.2.7 + Django REST Framework 3.14.0
-- **Database**: PostgreSQL 14+ (via psycopg2-binary)
-- **Vector Database**: Milvus 2.3.4 (for RAG system)
-- **Task Queue**: Celery 5.3.4 + Redis 5.0.1
-- **Web Scraping**:
-  - Firecrawl API (link extraction)
-  - Playwright 1.55.0 (browser automation)
-  - BeautifulSoup 4.13.5 (HTML parsing)
-- **ML/NLP**:
-  - Transformers 4.57.1
-  - Sentence-Transformers 2.2.2
-  - Spacy 3.7.2
-- **Authentication**: Token-based (Django REST Framework)
-
-## 📁 Project Structure
+## Project Structure
 
 ```
-FYP_Backend/
-├── config/                  # Django settings and configuration
-│   ├── settings.py         # Main settings (DB, Celery, Milvus, API keys)
-│   ├── urls.py             # Root URL routing
-│   └── celery.py           # Celery configuration
+backend/
 ├── apps/
-│   ├── monitoring/         # Core competitor management
-│   │   ├── models.py       # Competitor, ExtractedLinks, HTML, Metadata
-│   │   ├── views.py        # API endpoints
-│   │   ├── serializers.py  # REST serializers
-│   │   └── urls.py         # API routes
-│   ├── scraping/           # Scraping tasks (Celery)
-│   │   ├── tasks.py        # 🔥 Your scripts integrated here
-│   │   └── models.py       # Scraping logs
-│   ├── rag/                # RAG system (future)
-│   └── analytics/          # Analytics (future)
-├── scripts/                # Original Python scripts (reference)
-├── utils/                  # Helper functions
-├── requirements.txt        # Python dependencies
-├── manage.py              # Django CLI
-├── .env                   # Environment variables
-└── docker-compose.yml     # PostgreSQL + Redis + Milvus
-
-📚 Documentation:
-├── API_DOCUMENTATION.md       # Complete API reference
-├── SCRAPING_INTEGRATION.md   # Detailed setup guide
-├── SCRIPT_MIGRATION.md       # How scripts were converted
-└── QUICKSTART.md            # Quick start guide
+│   ├── accounts/       # Auth, roles, users, RBAC, alert preferences
+│   ├── monitoring/     # Competitors, HTML snapshots, diff detection
+│   ├── scraping/       # Celery tasks — scraping pipeline, daily cron
+│   ├── social_media/   # LinkedIn posts, job postings, follower snapshots
+│   ├── dashboard/      # 40+ read-only analytics endpoints
+│   ├── reports/        # AI report generation and PDF export
+│   ├── analytics/      # Competitor metrics and trend analysis models
+│   └── rag/            # RAG system (Chroma vector DB)
+├── config/             # Django settings, URL routing, Celery config
+├── utils/              # Shared helpers
+├── docs/               # Documentation
+│   ├── QUICKSTART.md   # Setup guide
+│   ├── API_REFERENCE.md # All API endpoints with cURL examples
+│   └── ARCHITECTURE.md # System architecture and data flow
+├── manage.py
+├── requirements_server.txt
+└── .env.example
 ```
 
-## ⚡ Quick Start
+## Quick Start
 
-### 1. Install Dependencies
-
-```powershell
-# Virtual environment (already created: myenv)
-myenv\Scripts\activate
-
-# Python packages (already installed)
-pip install -r requirements.txt
-```
-
-### 3. Environment Configuration
-
-Copy `.env.example` to `.env` and update with your settings:
+See [docs/QUICKSTART.md](docs/QUICKSTART.md) for full setup instructions.
 
 ```bash
-copy .env.example .env
-```
+# 1. Clone and set up environment
+git clone <repo-url> && cd backend
+py -3.10 -m venv venv && venv\Scripts\activate   # Windows
+pip install -r requirements_server.txt
 
-### 4. Database Setup
+# 2. Configure .env (copy from .env.example and fill in values)
 
-Ensure PostgreSQL is running, then:
-
-```bash
-python manage.py makemigrations
+# 3. Run migrations and create superuser
 python manage.py migrate
-```
-
-### 5. Create Superuser
-
-```bash
 python manage.py createsuperuser
-```
 
-### 6. Start Milvus
-
-Using Docker:
-
-```bash
-docker run -d --name milvus-standalone -p 19530:19530 -p 9091:9091 milvusdb/milvus:latest standalone
-```
-
-### 7. Start Redis
-
-```bash
-# Windows with WSL or Docker
-docker run -d --name redis -p 6379:6379 redis:latest
-```
-
-### 8. Run Development Server
-
-```bash
+# 4. Start services
+docker run -d -p 6379:6379 --name redis redis
+celery -A config worker --loglevel=info --pool=solo   # separate terminal
 python manage.py runserver
 ```
 
-### 9. Start Celery Worker (separate terminal)
+API is live at `http://localhost:8000`. Admin panel at `http://localhost:8000/admin`.
 
-```bash
-celery -A config worker -l info
-```
+## Documentation
 
-### 10. Start Celery Beat (separate terminal)
+| Document | Description |
+|---|---|
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Step-by-step local setup |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | All endpoints with cURL examples |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design and data flow |
 
-```bash
-celery -A config beat -l info
-```
+## Cron Schedule
 
-## API Endpoints
-
-### Monitoring
-
-- `GET /api/monitoring/competitors/` - List competitors
-- `POST /api/monitoring/competitors/` - Add competitor
-- `GET /api/monitoring/data/` - View competitor data
-- `GET /api/monitoring/tasks/` - View monitoring tasks
-
-### Scraping
-
-- `GET /api/scraping/configs/` - List scraping configs
-- `POST /api/scraping/configs/` - Create scraping config
-- `POST /api/scraping/configs/{id}/trigger_scraping/` - Trigger scraping
-- `GET /api/scraping/logs/` - View scraping logs
-
-### RAG
-
-- `POST /api/rag/query/` - Perform RAG query
-- `GET /api/rag/documents/` - List vector documents
-- `GET /api/rag/logs/` - View query logs
-
-### Analytics
-
-- `GET /api/analytics/metrics/` - View metrics
-- `GET /api/analytics/trends/` - View trends
-- `GET /api/analytics/metrics/summary/` - Get metrics summary
-
-## Admin Panel
-
-Access at `http://localhost:8000/admin/`
-
-## Development
-
-### Running Tests
-
-```bash
-pytest
-```
-
-### Code Formatting
-
-```bash
-black .
-flake8
-```
-
-## 🔥 Your Scripts - Now Integrated!
-
-Your three scraping scripts are now fully integrated into Django:
-
-| Original Script      | New Celery Task                 | Database Table        | API Endpoint                          |
-| -------------------- | ------------------------------- | --------------------- | ------------------------------------- |
-| `Links_extractor.py` | `extract_competitor_links()`    | `extracted_links`     | `/competitors/{id}/extract_links/`    |
-| `Scrape_HTML.py`     | `scrape_competitor_html()`      | `competitor_html`     | `/competitors/{id}/scrape_html/`      |
-| `json_of_html.py`    | `extract_competitor_metadata()` | `competitor_metadata` | `/competitors/{id}/extract_metadata/` |
-
-### Quick Test
-
-```python
-import requests
-
-BASE = "http://localhost:8000/api/monitoring"
-token = "your_token_here"  # Get from login
-headers = {"Authorization": f"Token {token}"}
-
-# Add competitor
-r = requests.post(f"{BASE}/competitors/", headers=headers, json={
-    "name": "Honda Pakistan",
-    "website_base_url": "https://honda.com.pk"
-})
-comp_id = r.json()['competitor']['id']
-
-# Run full scraping pipeline (all 3 scripts!)
-requests.post(f"{BASE}/competitors/{comp_id}/run_full_pipeline/", headers=headers)
-```
-
-**See [QUICKSTART.md](QUICKSTART.md) for complete guide!**
-
-## 📖 Documentation
-
-- **[QUICKSTART.md](QUICKSTART.md)** - 5-minute setup guide
-- **[API_DOCUMENTATION.md](API_DOCUMENTATION.md)** - Complete API reference
-- **[SCRAPING_INTEGRATION.md](SCRAPING_INTEGRATION.md)** - Detailed integration guide
-- **[SCRIPT_MIGRATION.md](SCRIPT_MIGRATION.md)** - How your scripts were converted
-
-## 🚀 Next Steps
-
-- [x] ✅ Scripts integrated into Django
-- [x] ✅ User authentication system
-- [x] ✅ Competitor management
-- [x] ✅ Async scraping tasks
-- [ ] ⏳ Add link filtering logic
-- [ ] ⏳ Build RAG system
-- [ ] ⏳ Connect React frontend
-
-## 📝 Notes
-
-- ✅ All data stored in PostgreSQL (no more file management!)
-- ✅ User-specific data isolation
-- ✅ Celery handles async tasks
-- ✅ Firecrawl API key configured in `.env`
-- ✅ Playwright browsers ready (`chromium` installed)
-
-## 📧 Support
-
-- **Quick Issues**: See `SCRAPING_INTEGRATION.md` troubleshooting
-- **API Help**: See `API_DOCUMENTATION.md`
-- **Examples**: See `QUICKSTART.md`
-
----
-
-**Ready to start?** Run `python manage.py runserver` and check [QUICKSTART.md](QUICKSTART.md)! 🎉
+| Time | Job |
+|---|---|
+| 2:00 AM daily | Website scraping + HTML diff detection + email alerts |
+| 3:00 AM daily | LinkedIn scraping (posts, jobs, snapshots) + email alerts |
+| Every 2 hours | News feed refresh |
