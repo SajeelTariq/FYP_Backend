@@ -470,6 +470,61 @@ def run_full_scraping_pipeline(competitor_id, use_filtered_links=False):
 
 
 @shared_task
+def run_initial_pipeline(competitor_id):
+    """
+    Triggered immediately when a new competitor is added (after links are already extracted).
+    Runs HTML scraping → initial snapshots → metadata extraction → ChromaDB embeddings
+    so RAG is ready without waiting for the nightly cron.
+
+    Updates competitor.onboarding_status at each step so the frontend can show progress.
+    """
+    from apps.monitoring.models import Competitor, ExtractedLinks
+
+    try:
+        comp = Competitor.objects.get(id=competitor_id, is_deleted=False)
+
+        link_obj = ExtractedLinks.objects.filter(competitor=comp).first()
+        if not link_obj or not link_obj.links:
+            comp.onboarding_status = 'error'
+            comp.onboarding_error = 'No links available to scrape.'
+            comp.save(update_fields=['onboarding_status', 'onboarding_error'])
+            logger.warning(f"[InitialPipeline] {comp.name}: no links found, aborting")
+            return
+
+        urls = link_obj.links
+        logger.info(f"[InitialPipeline] {comp.name}: starting with {len(urls)} links")
+
+        # Step 1 — Scrape HTML (status already set to 'scraping' by views.py)
+        _step2_scrape_html(comp, urls)
+
+        # Step 2 — Create initial snapshots (is_first_time handled gracefully)
+        _step3_detect_changes_and_summarize(comp, urls)
+
+        # Step 3 — Extract clean text + update embeddings
+        comp.onboarding_status = 'indexing'
+        comp.save(update_fields=['onboarding_status'])
+
+        _step4_extract_clean_text(comp, urls)
+        _step5_update_embeddings(comp)
+
+        comp.onboarding_status = 'ready'
+        comp.onboarding_error = ''
+        comp.save(update_fields=['onboarding_status', 'onboarding_error'])
+        logger.info(f"[InitialPipeline] {comp.name}: completed — RAG ready")
+
+    except Competitor.DoesNotExist:
+        logger.error(f"[InitialPipeline] Competitor {competitor_id} not found")
+    except Exception as e:
+        logger.error(f"[InitialPipeline] Failed for competitor {competitor_id}: {e}")
+        try:
+            comp.onboarding_status = 'error'
+            comp.onboarding_error = str(e)[:500]
+            comp.save(update_fields=['onboarding_status', 'onboarding_error'])
+        except Exception:
+            pass
+
+
+@shared_task
 def scrape_all_competitors():
     """Run full scraping pipeline for all active competitors."""
     from .models import ScrapingConfig

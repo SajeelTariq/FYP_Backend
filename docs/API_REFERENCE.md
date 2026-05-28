@@ -104,6 +104,17 @@ curl -X POST http://localhost:8000/api/monitoring/competitors/ \
 
 **Note:** `linkedin_url` and `stock_symbol` are optional. `stock_symbol` unlocks all financial dashboard sections.
 
+The response includes `onboarding_status` which tracks the initial data pipeline. The frontend should poll `GET /api/monitoring/competitors/{id}/` every 5 seconds until status is `ready` or `error`.
+
+| `onboarding_status` | Meaning | Frontend label |
+|---|---|---|
+| `scraping` | Playwright is scraping all website pages | "Scraping pages..." |
+| `indexing` | Building ChromaDB embeddings for RAG | "Building AI index..." |
+| `ready` | Pipeline complete — RAG available | *(no indicator)* |
+| `error` | Pipeline failed — see `onboarding_error` | "Setup failed" |
+
+**Important:** During `scraping` and `indexing` states, the AI assistant will not have data for this competitor yet.
+
 ---
 
 ### Get competitor

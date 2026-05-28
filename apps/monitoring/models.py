@@ -21,6 +21,26 @@ class Competitor(models.Model):
         help_text="Stock ticker symbol (e.g. CRM, MSFT) for FMP data"
     )
 
+    ONBOARDING_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('scraping', 'Scraping Pages'),
+        ('indexing', 'Building AI Index'),
+        ('ready', 'Ready'),
+        ('error', 'Error'),
+    ]
+    onboarding_status = models.CharField(
+        max_length=20,
+        choices=ONBOARDING_STATUS_CHOICES,
+        default='pending',
+        help_text="Tracks initial data pipeline progress after competitor is added"
+    )
+    onboarding_error = models.CharField(
+        max_length=500,
+        blank=True,
+        default='',
+        help_text="Error message if onboarding_status is error"
+    )
+
     class Meta:
         ordering = ['-created_at']
         verbose_name = 'Competitor'
