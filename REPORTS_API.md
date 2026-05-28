@@ -206,6 +206,26 @@ curl -X GET http://127.0.0.1:8000/api/reports/8/ \
 
 ---
 
+### 6. Delete Report
+
+Permanently deletes a report. Returns `204 No Content` on success.
+
+```bash
+curl -X DELETE http://127.0.0.1:8000/api/reports/8/delete/ \
+  -H "Authorization: Token <your_token_here>"
+```
+
+**Response `204 No Content`** — empty body.
+
+**Response `404 Not Found`:**
+```json
+{
+  "error": "Report not found."
+}
+```
+
+---
+
 ## Frontend Flow
 
 ```

@@ -1,3 +1,4 @@
+import logging
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -8,6 +9,8 @@ from .models import Report
 from .serializers import GenerateReportSerializer, ReportSerializer, ReportListSerializer
 from .tasks import generate_report_task
 from .pdf_generator import generate_pdf
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
@@ -39,6 +42,7 @@ def generate_report(request):
         report.competitors.set(valid_competitors)
 
     generate_report_task.delay(report.id)
+    logger.info(f"Report {report.id} queued — user={request.user.username} type={report.report_type} period={period_start}/{period_end}")
 
     return Response(
         {
@@ -108,6 +112,7 @@ def download_report_pdf(request, report_id):
 
     pdf_bytes = generate_pdf(report)
     filename = f"report_{report.report_type}_{report.period_start}_{report.period_end}.pdf"
+    logger.info(f"PDF generated — report={report.id} user={request.user.username} size={len(pdf_bytes)}B")
 
     response = HttpResponse(pdf_bytes, content_type='application/pdf')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
@@ -121,5 +126,6 @@ def delete_report(request, report_id):
         report = Report.objects.get(id=report_id, user=request.user)
     except Report.DoesNotExist:
         return Response({"error": "Report not found."}, status=status.HTTP_404_NOT_FOUND)
+    logger.info(f"Report {report.id} deleted — user={request.user.username}")
     report.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
