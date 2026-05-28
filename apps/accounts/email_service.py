@@ -37,7 +37,7 @@ def send_website_change_alerts():
             HTMLDifference.objects
             .filter(
                 competitor__user=pref.user,
-                is_significant=True,
+                change_category='critical',
                 detected_at__gte=since,
             )
             .select_related('competitor')

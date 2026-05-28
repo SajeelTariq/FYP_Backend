@@ -42,9 +42,10 @@ class CompetitorSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'website_base_url', 'linkedin_url',
             'facebook_url', 'instagram_url', 'twitter_url',
-            'stock_symbol', 'is_deleted', 'created_at', 'updated_at'
+            'stock_symbol', 'is_deleted', 'onboarding_status',
+            'onboarding_error', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'onboarding_status', 'onboarding_error', 'created_at', 'updated_at']
 
     def validate(self, data):
         # At least one URL must be provided

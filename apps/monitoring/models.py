@@ -21,6 +21,26 @@ class Competitor(models.Model):
         help_text="Stock ticker symbol (e.g. CRM, MSFT) for FMP data"
     )
 
+    ONBOARDING_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('scraping', 'Scraping Pages'),
+        ('indexing', 'Building AI Index'),
+        ('ready', 'Ready'),
+        ('error', 'Error'),
+    ]
+    onboarding_status = models.CharField(
+        max_length=20,
+        choices=ONBOARDING_STATUS_CHOICES,
+        default='pending',
+        help_text="Tracks initial data pipeline progress after competitor is added"
+    )
+    onboarding_error = models.CharField(
+        max_length=500,
+        blank=True,
+        default='',
+        help_text="Error message if onboarding_status is error"
+    )
+
     class Meta:
         ordering = ['-created_at']
         verbose_name = 'Competitor'
@@ -202,14 +222,26 @@ class HTMLDifference(models.Model):
         help_text="Detailed line-by-line or block-by-block differences"
     )
     detected_at = models.DateTimeField(auto_now_add=True)
+    CATEGORY_CHOICES = [
+        ('critical', 'Critical'),
+        ('non_critical', 'Non-Critical'),
+        ('technical', 'Technical'),
+    ]
+
     is_significant = models.BooleanField(
-        default=False, 
-        help_text="Whether this change is significant enough for RAG update"
+        default=False,
+        help_text="True only for critical business-impacting changes"
     )
     llm_summary = models.TextField(
         blank=True,
         default='',
         help_text="LLM-generated human-readable summary of the changes"
+    )
+    change_category = models.CharField(
+        max_length=20,
+        choices=CATEGORY_CHOICES,
+        default='non_critical',
+        help_text="critical=business-impacting, non_critical=minor visible change, technical=no visible content change"
     )
 
     class Meta:

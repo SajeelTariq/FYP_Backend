@@ -168,6 +168,7 @@ def change_feed(request):
                 "competitor_id": r.competitor_id,
                 "competitor_name": r.competitor.name,
                 "change_type": r.change_type,
+                "change_category": r.change_category,
                 "is_significant": r.is_significant,
                 "detected_at": r.detected_at.isoformat(),
                 "llm_summary": r.llm_summary,

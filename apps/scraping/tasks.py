@@ -470,6 +470,61 @@ def run_full_scraping_pipeline(competitor_id, use_filtered_links=False):
 
 
 @shared_task
+def run_initial_pipeline(competitor_id):
+    """
+    Triggered immediately when a new competitor is added (after links are already extracted).
+    Runs HTML scraping → initial snapshots → metadata extraction → ChromaDB embeddings
+    so RAG is ready without waiting for the nightly cron.
+
+    Updates competitor.onboarding_status at each step so the frontend can show progress.
+    """
+    from apps.monitoring.models import Competitor, ExtractedLinks
+
+    try:
+        comp = Competitor.objects.get(id=competitor_id, is_deleted=False)
+
+        link_obj = ExtractedLinks.objects.filter(competitor=comp).first()
+        if not link_obj or not link_obj.links:
+            comp.onboarding_status = 'error'
+            comp.onboarding_error = 'No links available to scrape.'
+            comp.save(update_fields=['onboarding_status', 'onboarding_error'])
+            logger.warning(f"[InitialPipeline] {comp.name}: no links found, aborting")
+            return
+
+        urls = link_obj.links
+        logger.info(f"[InitialPipeline] {comp.name}: starting with {len(urls)} links")
+
+        # Step 1 — Scrape HTML (status already set to 'scraping' by views.py)
+        _step2_scrape_html(comp, urls)
+
+        # Step 2 — Create initial snapshots (is_first_time handled gracefully)
+        _step3_detect_changes_and_summarize(comp, urls)
+
+        # Step 3 — Extract clean text + update embeddings
+        comp.onboarding_status = 'indexing'
+        comp.save(update_fields=['onboarding_status'])
+
+        _step4_extract_clean_text(comp, urls)
+        _step5_update_embeddings(comp)
+
+        comp.onboarding_status = 'ready'
+        comp.onboarding_error = ''
+        comp.save(update_fields=['onboarding_status', 'onboarding_error'])
+        logger.info(f"[InitialPipeline] {comp.name}: completed — RAG ready")
+
+    except Competitor.DoesNotExist:
+        logger.error(f"[InitialPipeline] Competitor {competitor_id} not found")
+    except Exception as e:
+        logger.error(f"[InitialPipeline] Failed for competitor {competitor_id}: {e}")
+        try:
+            comp.onboarding_status = 'error'
+            comp.onboarding_error = str(e)[:500]
+            comp.save(update_fields=['onboarding_status', 'onboarding_error'])
+        except Exception:
+            pass
+
+
+@shared_task
 def scrape_all_competitors():
     """Run full scraping pipeline for all active competitors."""
     from .models import ScrapingConfig
@@ -687,15 +742,27 @@ def _step2_scrape_html(competitor, urls_to_scrape):
     return scraped
 
 
+def _extract_visible_text_lines(html_content):
+    """Extract visible text lines from HTML, stripping all tags and invisible elements."""
+    soup = BeautifulSoup(html_content, "html.parser")
+    for tag in soup(["script", "style", "noscript", "svg", "iframe", "meta", "link", "head"]):
+        tag.extract()
+    text = soup.get_text(separator="\n")
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.split("\n")]
+    return [line for line in lines if len(line) > 2]
+
+
 def _step3_detect_changes_and_summarize(competitor, urls_to_check):
     """
     Step 3 – For each URL:
       a) Compute SHA-256 of current HTML (from CompetitorHTML)
       b) Compare with latest HTMLSnapshot
-      c) If changed: create new snapshot, compute diff, call LLM for summary,
+      c) If changed: create new snapshot, diff visible text (not raw HTML),
+         classify as critical/non_critical/technical, call LLM for business summary,
          store HTMLDifference, increment Competitor.change_count
     Returns number of changes detected.
     """
+    import json as _json
     from apps.monitoring.models import CompetitorHTML, HTMLSnapshot, HTMLDifference
 
     if not urls_to_check:
@@ -711,7 +778,6 @@ def _step3_detect_changes_and_summarize(competitor, urls_to_check):
         current_html = html_obj.html_content
         current_hash = hashlib.sha256(current_html.encode("utf-8")).hexdigest()
 
-        # Get latest snapshot for this competitor+url
         latest_snapshot = (
             HTMLSnapshot.objects.filter(competitor=competitor, url=url)
             .order_by("-snapshot_at")
@@ -722,9 +788,8 @@ def _step3_detect_changes_and_summarize(competitor, urls_to_check):
         has_changed = is_first_time or latest_snapshot.content_hash != current_hash
 
         if not has_changed:
-            continue  # No change for this URL
+            continue
 
-        # Create new snapshot
         new_snapshot = HTMLSnapshot.objects.create(
             competitor=competitor,
             url=url,
@@ -733,7 +798,6 @@ def _step3_detect_changes_and_summarize(competitor, urls_to_check):
         )
 
         if is_first_time:
-            # First time — record initial snapshot, no diff needed
             HTMLDifference.objects.create(
                 competitor=competitor,
                 url=url,
@@ -743,26 +807,23 @@ def _step3_detect_changes_and_summarize(competitor, urls_to_check):
                 diff_summary={"note": "Initial snapshot recorded"},
                 detailed_diff=[],
                 is_significant=False,
+                change_category="technical",
                 llm_summary="Initial snapshot — no previous version to compare.",
             )
-            continue  # Don't count initial snapshots as "changes"
+            continue
 
-        # ── Compute diff ──
+        # ── Compute raw HTML diff (stored for reference) ──
         old_lines = latest_snapshot.html_content.splitlines()
         new_lines = current_html.splitlines()
-        sm = SequenceMatcher(None, old_lines, new_lines)
+        sm_raw = SequenceMatcher(None, old_lines, new_lines)
 
         added_count = 0
         removed_count = 0
         diff_blocks = []
-        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        for tag, i1, i2, j1, j2 in sm_raw.get_opcodes():
             if tag == "equal":
                 continue
-            block = {
-                "type": tag,
-                "old_range": [i1, i2],
-                "new_range": [j1, j2],
-            }
+            block = {"type": tag, "old_range": [i1, i2], "new_range": [j1, j2]}
             if tag in ("replace", "delete"):
                 removed_count += i2 - i1
             if tag in ("replace", "insert"):
@@ -770,9 +831,8 @@ def _step3_detect_changes_and_summarize(competitor, urls_to_check):
             diff_blocks.append(block)
 
         if not diff_blocks:
-            continue  # Edge case — hash differs but no line diff
+            continue
 
-        # Determine change_type
         if removed_count == 0:
             change_type = "added"
         elif added_count == 0:
@@ -786,29 +846,62 @@ def _step3_detect_changes_and_summarize(competitor, urls_to_check):
             "total_blocks": len(diff_blocks),
         }
 
-        # ── LLM summary ──
-        # Build a concise context of what changed (limit token usage)
-        diff_context_parts = []
-        for block in diff_blocks[:10]:  # Cap to 10 blocks
-            if block["type"] in ("replace", "delete"):
-                old_slice = old_lines[block["old_range"][0]:block["old_range"][1]]
-                diff_context_parts.append("REMOVED:\n" + "\n".join(old_slice[:20]))
-            if block["type"] in ("replace", "insert"):
-                new_slice = new_lines[block["new_range"][0]:block["new_range"][1]]
-                diff_context_parts.append("ADDED:\n" + "\n".join(new_slice[:20]))
+        # ── Diff visible text to determine real content change ──
+        old_text_lines = _extract_visible_text_lines(latest_snapshot.html_content)
+        new_text_lines = _extract_visible_text_lines(current_html)
+        sm_text = SequenceMatcher(None, old_text_lines, new_text_lines)
 
-        diff_context = "\n---\n".join(diff_context_parts)
-        llm_prompt = (
-            f"The following HTML changes were detected on the page: {url}\n"
-            f"Competitor: {competitor.name}\n\n"
-            f"Changes:\n{diff_context}\n\n"
-            "Please provide a concise, human-readable summary (2-4 sentences) "
-            "of what changed on this page. Focus on meaningful content changes, "
-            "ignoring minor formatting/whitespace."
-        )
-        llm_summary = _call_openai_llm(llm_prompt)
+        text_diff_parts = []
+        for tag, i1, i2, j1, j2 in sm_text.get_opcodes():
+            if tag == "equal":
+                continue
+            if tag in ("replace", "delete"):
+                old_slice = old_text_lines[i1:i2]
+                text_diff_parts.append("REMOVED:\n" + "\n".join(old_slice[:15]))
+            if tag in ("replace", "insert"):
+                new_slice = new_text_lines[j1:j2]
+                text_diff_parts.append("ADDED:\n" + "\n".join(new_slice[:15]))
 
-        is_significant = (added_count + removed_count) > 5
+        # ── Classify and summarize ──
+        if not text_diff_parts:
+            # HTML structure changed but no visible text affected — purely technical
+            change_category = "technical"
+            is_significant = False
+            llm_summary = "Technical update — no visible content changes detected (script or structural HTML only)."
+        else:
+            text_diff_context = "\n---\n".join(text_diff_parts[:8])
+            llm_prompt = (
+                f"You are analyzing website changes for a competitor intelligence platform.\n"
+                f"Competitor: {competitor.name}\n"
+                f"Page: {url}\n\n"
+                f"The following visible text changes were detected:\n\n"
+                f"{text_diff_context}\n\n"
+                f"Tasks:\n"
+                f"1. Classify as 'critical' or 'non_critical':\n"
+                f"   - critical: price changes, product launches or removals, new features, "
+                f"promotions, major announcements, strategic content changes\n"
+                f"   - non_critical: minor text tweaks, updated dates, small wording "
+                f"adjustments, minor navigation changes\n"
+                f"2. Write a 1-2 sentence plain-English summary for a business user. "
+                f"No HTML, no technical terms. Focus on the market or business impact.\n\n"
+                f"Respond ONLY in this exact JSON format:\n"
+                f'{{"category": "critical", "summary": "your summary here"}}'
+            )
+            raw_response = _call_openai_llm(llm_prompt)
+
+            try:
+                # Strip markdown code fences if the LLM wrapped the JSON
+                clean = raw_response.strip().strip("```json").strip("```").strip()
+                parsed = _json.loads(clean)
+                change_category = parsed.get("category", "non_critical")
+                if change_category not in ("critical", "non_critical"):
+                    change_category = "non_critical"
+                llm_summary = parsed.get("summary", raw_response)
+            except Exception:
+                change_category = "critical" if "critical" in raw_response.lower() else "non_critical"
+                llm_summary = raw_response
+
+            is_significant = (change_category == "critical")
 
         HTMLDifference.objects.create(
             competitor=competitor,
@@ -819,12 +912,12 @@ def _step3_detect_changes_and_summarize(competitor, urls_to_check):
             diff_summary=diff_summary,
             detailed_diff=diff_blocks,
             is_significant=is_significant,
+            change_category=change_category,
             llm_summary=llm_summary,
         )
 
         changes_detected += 1
 
-    # Increment change_count on Competitor
     if changes_detected > 0:
         from django.db.models import F
         from apps.monitoring.models import Competitor as CompetitorModel

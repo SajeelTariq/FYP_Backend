@@ -190,7 +190,18 @@ class CompetitorViewSet(viewsets.ModelViewSet):
                             'error': link_result['message'],
                             'links_count': link_result.get('links_count', 0)
                         }, status=status.HTTP_400_BAD_REQUEST)
-                
+
+                # Fire async pipeline if links were extracted successfully
+                if link_result and link_result.get('status') == 'success':
+                    existing_competitor.onboarding_status = 'scraping'
+                    existing_competitor.onboarding_error = ''
+                    existing_competitor.save(update_fields=['onboarding_status', 'onboarding_error'])
+                    from apps.scraping.tasks import run_initial_pipeline
+                    run_initial_pipeline.delay(existing_competitor.id)
+                else:
+                    existing_competitor.onboarding_status = 'ready'
+                    existing_competitor.save(update_fields=['onboarding_status'])
+
                 response_data = {
                     'message': 'Competitor restored and updated successfully',
                     'competitor': CompetitorSerializer(existing_competitor).data,
@@ -249,8 +260,19 @@ class CompetitorViewSet(viewsets.ModelViewSet):
                     'error': link_result['message'],
                     'links_count': link_result.get('links_count', 0)
                 }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Trigger one-time 6-day news backfill for new competitor
+
+        # Step 5: Fire async pipeline or mark ready
+        if competitor.website_base_url and link_result and link_result.get('status') == 'success':
+            competitor.onboarding_status = 'scraping'
+            competitor.save(update_fields=['onboarding_status'])
+            from apps.scraping.tasks import run_initial_pipeline
+            run_initial_pipeline.delay(competitor.id)
+        else:
+            # No website URL or no links found — nothing to scrape
+            competitor.onboarding_status = 'ready'
+            competitor.save(update_fields=['onboarding_status'])
+
+        # Trigger one-time 6-day news backfill
         if competitor.website_base_url:
             from apps.scraping.tasks import fetch_initial_competitor_news
             fetch_initial_competitor_news.delay(competitor.id)
@@ -267,7 +289,7 @@ class CompetitorViewSet(viewsets.ModelViewSet):
                 response_data['links_warning'] = link_result.get('message')
             elif link_result.get('status') == 'error':
                 response_data['links_error'] = link_result.get('message')
-        
+
         return Response(response_data, status=status.HTTP_201_CREATED)
     
     def update(self, request, *args, **kwargs):
