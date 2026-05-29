@@ -14,7 +14,7 @@ from django.conf import settings
 import chromadb
 from difflib import SequenceMatcher
 
-CHROMA_HOST = getattr(settings, 'CHROMA_HOST', 'localhost')
+CHROMA_HOST = getattr(settings, 'CHROMA_HOST', '127.0.0.1')
 CHROMA_PORT = getattr(settings, 'CHROMA_PORT', 8001)
 
 
