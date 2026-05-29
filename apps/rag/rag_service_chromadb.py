@@ -12,34 +12,28 @@ import requests
 from sentence_transformers import SentenceTransformer
 from django.conf import settings
 import chromadb
-from chromadb.config import Settings as ChromaSettings
 from difflib import SequenceMatcher
+
+CHROMA_HOST = getattr(settings, 'CHROMA_HOST', 'localhost')
+CHROMA_PORT = getattr(settings, 'CHROMA_PORT', 8001)
 
 
 class RAGServiceChroma:
-    """Service for RAG operations with ChromaDB and hybrid retrieval."""
-    
+    """Service for RAG operations with ChromaDB HTTP client."""
+
     def __init__(self):
-        """Initialize ChromaDB client and embedding model."""
-        # Initialize embedding model
+        """Initialize ChromaDB HTTP client and embedding model."""
         self.embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
         self.chunk_size = 1500  # characters
         self.chunk_overlap = 150  # characters
-        
-        # Initialize ChromaDB persistent client
-        chroma_db_path = os.path.join(settings.BASE_DIR, 'chroma_db')
-        self.client = chromadb.PersistentClient(
-            path=chroma_db_path,
-            settings=ChromaSettings(
-                anonymized_telemetry=False,
-                allow_reset=True
-            )
-        )
-        
+
+        # HttpClient — safe for concurrent access from multiple processes
+        self.client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+
         # Get or create collection
         self.collection = self.client.get_or_create_collection(
             name="competitor_documents",
-            metadata={"hnsw:space": "cosine"}  # Use cosine similarity
+            metadata={"hnsw:space": "cosine"}
         )
         
         
