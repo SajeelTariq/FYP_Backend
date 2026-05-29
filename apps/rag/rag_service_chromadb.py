@@ -18,13 +18,16 @@ CHROMA_HOST = getattr(settings, 'CHROMA_HOST', '127.0.0.1')
 CHROMA_PORT = getattr(settings, 'CHROMA_PORT', 8001)
 RAG_TOP_K = getattr(settings, 'RAG_TOP_K', 10)
 
+# Loaded once at import time, shared across all RAGServiceChroma instances and workers
+_embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+
 
 class RAGServiceChroma:
     """Service for RAG operations with ChromaDB HTTP client."""
 
     def __init__(self):
         """Initialize ChromaDB HTTP client and embedding model."""
-        self.embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        self.embedding_model = _embedding_model
         self.chunk_size = 1500  # characters
         self.chunk_overlap = 150  # characters
 
