@@ -40,6 +40,7 @@ CHROMA_PORT = int(os.getenv('CHROMA_PORT', '8001'))
 
 # RAG Configuration
 RAG_TOP_K = int(os.getenv('RAG_TOP_K', '10'))
+RAG_CACHE_TTL = int(os.getenv('RAG_CACHE_TTL', '7200'))  # seconds; 0 disables caching
 
 # Maximum number of subpage links allowed per competitor
 MAX_COMPETITOR_LINKS = int(os.getenv('MAX_COMPETITOR_LINKS', '500'))

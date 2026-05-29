@@ -1,6 +1,7 @@
 """
 RAG Service with ChromaDB: Semantic retrieval using dense vectors (ChromaDB HNSW).
 """
+import hashlib
 import json
 import os
 import time
@@ -11,12 +12,14 @@ import requests
 
 from sentence_transformers import SentenceTransformer
 from django.conf import settings
+from django.core.cache import cache
 import chromadb
 from difflib import SequenceMatcher
 
 CHROMA_HOST = getattr(settings, 'CHROMA_HOST', '127.0.0.1')
 CHROMA_PORT = getattr(settings, 'CHROMA_PORT', 8001)
 RAG_TOP_K = getattr(settings, 'RAG_TOP_K', 10)
+RAG_CACHE_TTL = getattr(settings, 'RAG_CACHE_TTL', 7200)
 
 # Loaded once at import time, shared across all RAGServiceChroma instances and workers
 _embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
@@ -454,6 +457,17 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
         start_time = time.time()
         top_k = top_k or RAG_TOP_K
 
+        # Cache lookup (skip if TTL is 0)
+        cache_key = None
+        if RAG_CACHE_TTL > 0:
+            raw_key = f"rag:{query_text.strip().lower()}:{competitor_filter or 'all'}:{top_k}"
+            cache_key = "rag_" + hashlib.md5(raw_key.encode()).hexdigest()
+            cached = cache.get(cache_key)
+            if cached is not None:
+                cached['cache_hit'] = True
+                cached['total_time'] = round(time.time() - start_time, 3)
+                return cached
+
         # Retrieval
         search_results = self.semantic_search(query_text, top_k, competitor_filter)
         retrieval_time = search_results['retrieval_time']
@@ -465,7 +479,7 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
         
         total_time = time.time() - start_time
         
-        return {
+        result = {
             'query': query_text,
             'answer': answer,
             'retrieved_chunks': [
@@ -480,8 +494,14 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
             'generation_time': generation_time,
             'total_time': total_time,
             'top_k': top_k,
-            'competitor_filter': competitor_filter or 'all'
+            'competitor_filter': competitor_filter or 'all',
+            'cache_hit': False,
         }
+
+        if cache_key:
+            cache.set(cache_key, result, RAG_CACHE_TTL)
+
+        return result
     
     def get_stats(self) -> Dict:
         """Get statistics about the RAG system."""
