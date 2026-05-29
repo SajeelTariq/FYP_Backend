@@ -1,11 +1,11 @@
 """
-RAG Service with ChromaDB: Hybrid retrieval using dense vectors + BM25
+RAG Service with ChromaDB: Semantic retrieval using dense vectors (ChromaDB HNSW).
 """
 import json
 import os
 import time
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Optional
 import numpy as np
 import requests
 
@@ -13,7 +13,6 @@ from sentence_transformers import SentenceTransformer
 from django.conf import settings
 import chromadb
 from chromadb.config import Settings as ChromaSettings
-from rank_bm25 import BM25Okapi
 from difflib import SequenceMatcher
 
 
@@ -43,10 +42,6 @@ class RAGServiceChroma:
             metadata={"hnsw:space": "cosine"}  # Use cosine similarity
         )
         
-        # BM25 index (will be loaded when needed)
-        self._bm25_index = None
-        self._bm25_documents = []
-        self._bm25_metadata = []
         
     def chunk_text(self, text: str) -> List[str]:
         """
@@ -302,39 +297,8 @@ class RAGServiceChroma:
             stats[competitor_name] = total_chunks
             print(f"✓ {competitor_name}: {total_chunks} chunks (removed {total_duplicates} duplicates)")
         
-        # Rebuild BM25 index after ingestion
-        self._build_bm25_index()
-        
         return stats
-    
-    def _build_bm25_index(self):
-        """Build BM25 index from all documents in ChromaDB."""
-        print("\nBuilding BM25 index...")
-        
-        # Get all documents from ChromaDB
-        results = self.collection.get(include=['documents', 'metadatas'])
-        
-        if not results or not results['documents']:
-            print("No documents found for BM25 indexing")
-            return
-        
-        # Store documents and metadata
-        self._bm25_documents = results['documents']
-        self._bm25_metadata = results['metadatas']
-        
-        # Tokenize documents for BM25 (simple whitespace tokenization)
-        tokenized_docs = [doc.lower().split() for doc in self._bm25_documents]
-        
-        # Create BM25 index
-        self._bm25_index = BM25Okapi(tokenized_docs)
-        
-        print(f"✓ BM25 index built with {len(self._bm25_documents)} documents")
-    
-    def _ensure_bm25_index(self):
-        """Ensure BM25 index is loaded."""
-        if self._bm25_index is None:
-            self._build_bm25_index()
-    
+
     def semantic_search(
         self,
         query: str,
@@ -342,104 +306,51 @@ class RAGServiceChroma:
         competitor_filter: Optional[str] = None
     ) -> List[Dict]:
         """
-        Perform hybrid search (dense + sparse retrieval).
-        
+        Perform semantic search using ChromaDB dense vector retrieval.
+
         Args:
             query: Search query
             top_k: Number of results to return
             competitor_filter: Filter by competitor name (honda, suzuki, kia)
-            
+
         Returns:
-            List of search results with metadata
+            Dict with results list and metadata
         """
         start_time = time.time()
-        
-        # Ensure BM25 index is loaded
-        self._ensure_bm25_index()
-        
-        # 1. Dense vector search (semantic similarity)
+
         query_embedding = self.generate_embedding(query)
-        
+
         where_filter = None
         if competitor_filter and competitor_filter.lower() != 'all':
             where_filter = {"competitor_name": competitor_filter.lower()}
-        
-        dense_results = self.collection.query(
+
+        results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=top_k * 2,  # Get more results for fusion
+            n_results=top_k,
             where=where_filter,
             include=['documents', 'metadatas', 'distances']
         )
-        
-        # 2. Sparse BM25 search (keyword matching)
-        query_tokens = query.lower().split()
-        
-        # Get BM25 scores for all documents
-        bm25_scores = self._bm25_index.get_scores(query_tokens)
-        
-        # Filter by competitor if needed
-        filtered_indices = []
-        if competitor_filter and competitor_filter.lower() != 'all':
-            for idx, metadata in enumerate(self._bm25_metadata):
-                if metadata.get('competitor_name', '').lower() == competitor_filter.lower():
-                    filtered_indices.append(idx)
-        else:
-            filtered_indices = list(range(len(bm25_scores)))
-        
-        # Get top BM25 results
-        filtered_scores = [(idx, bm25_scores[idx]) for idx in filtered_indices]
-        filtered_scores.sort(key=lambda x: x[1], reverse=True)
-        top_bm25_indices = [idx for idx, _ in filtered_scores[:top_k * 2]]
-        
-        # 3. Fusion: Combine dense and sparse results
-        # Using reciprocal rank fusion (RRF)
-        k = 60  # RRF constant
-        fusion_scores = {}
-        
-        # Add dense results (semantic gets higher weight: 2.5x)
-        if dense_results['ids'] and len(dense_results['ids'][0]) > 0:
-            for rank, (doc_id, distance) in enumerate(zip(dense_results['ids'][0], dense_results['distances'][0])):
-                # Convert distance to similarity (ChromaDB returns distances)
-                similarity = 1 / (1 + distance)
-                # Semantic search weighted 2.5x higher for better semantic understanding
-                fusion_scores[doc_id] = fusion_scores.get(doc_id, 0) + (2.5 / (k + rank + 1))
-        
-        # Add BM25 results (keyword gets standard weight: 1.0x)
-        all_ids = self.collection.get(include=['metadatas'])['ids']
-        for rank, idx in enumerate(top_bm25_indices):
-            if idx < len(all_ids):
-                doc_id = all_ids[idx]
-                # BM25 keyword matching weighted 1.0x
-                fusion_scores[doc_id] = fusion_scores.get(doc_id, 0) + (1.0 / (k + rank + 1))
-        
-        # Sort by fusion score
-        sorted_results = sorted(fusion_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        
-        # Retrieve full documents for top results
+
         final_results = []
-        if sorted_results:
-            top_ids = [doc_id for doc_id, _ in sorted_results]
-            retrieved = self.collection.get(
-                ids=top_ids,
-                include=['documents', 'metadatas']
-            )
-            
-            for doc_id, fusion_score in sorted_results:
-                idx = retrieved['ids'].index(doc_id)
+        if results['ids'] and results['ids'][0]:
+            for doc_id, document, metadata, distance in zip(
+                results['ids'][0],
+                results['documents'][0],
+                results['metadatas'][0],
+                results['distances'][0],
+            ):
                 final_results.append({
                     'id': doc_id,
-                    'text': retrieved['documents'][idx],
-                    'metadata': retrieved['metadatas'][idx],
-                    'fusion_score': fusion_score
+                    'text': document,
+                    'metadata': metadata,
+                    'fusion_score': round(1 / (1 + distance), 4),
                 })
-        
-        retrieval_time = time.time() - start_time
-        
+
         return {
             'results': final_results,
-            'retrieval_time': retrieval_time,
+            'retrieval_time': round(time.time() - start_time, 3),
             'query': query,
-            'total_results': len(final_results)
+            'total_results': len(final_results),
         }
     
     def generate_answer(self, query: str, context_chunks: List[Dict]) -> str:
@@ -624,7 +535,6 @@ Answer:"""
         # Fetch all metadata records for this competitor from DB
         metadata_qs = CompetitorMetadata.objects.filter(competitor=competitor)
         if not metadata_qs.exists():
-            self._build_bm25_index()
             return {"added": 0, "deleted": deleted}
 
         chunk_ids = []
@@ -677,8 +587,5 @@ Answer:"""
                     documents=documents[i : i + batch_size],
                     metadatas=metadatas[i : i + batch_size],
                 )
-
-        # Rebuild BM25 index
-        self._build_bm25_index()
 
         return {"added": len(chunk_ids), "deleted": deleted}
