@@ -38,6 +38,9 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 CHROMA_HOST = os.getenv('CHROMA_HOST', '127.0.0.1')
 CHROMA_PORT = int(os.getenv('CHROMA_PORT', '8001'))
 
+# RAG Configuration
+RAG_TOP_K = int(os.getenv('RAG_TOP_K', '10'))
+
 # Maximum number of subpage links allowed per competitor
 MAX_COMPETITOR_LINKS = int(os.getenv('MAX_COMPETITOR_LINKS', '500'))
 

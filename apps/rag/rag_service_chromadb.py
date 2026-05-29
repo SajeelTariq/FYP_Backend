@@ -16,6 +16,7 @@ from difflib import SequenceMatcher
 
 CHROMA_HOST = getattr(settings, 'CHROMA_HOST', '127.0.0.1')
 CHROMA_PORT = getattr(settings, 'CHROMA_PORT', 8001)
+RAG_TOP_K = getattr(settings, 'RAG_TOP_K', 10)
 
 
 class RAGServiceChroma:
@@ -355,7 +356,7 @@ class RAGServiceChroma:
             f"Page Title: {chunk['metadata'].get('title', 'Unknown')}\n"
             f"Page URL: {chunk['metadata'].get('url', 'N/A')}\n"
             f"Content:\n{chunk['text']}"
-            for i, chunk in enumerate(context_chunks[:5])
+            for i, chunk in enumerate(context_chunks)
         ])
 
         system_prompt = """You are a professional automotive intelligence assistant for TrackRival, a competitor monitoring platform focused on the Pakistani automotive market (Honda, Suzuki, Kia).
@@ -433,7 +434,7 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
     def query(
         self,
         query_text: str,
-        top_k: int = 5,
+        top_k: int = None,
         competitor_filter: Optional[str] = None
     ) -> Dict:
         """
@@ -448,7 +449,8 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
             Dictionary with answer and metadata
         """
         start_time = time.time()
-        
+        top_k = top_k or RAG_TOP_K
+
         # Retrieval
         search_results = self.semantic_search(query_text, top_k, competitor_filter)
         retrieval_time = search_results['retrieval_time']
