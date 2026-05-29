@@ -35,7 +35,7 @@ OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 
 # ChromaDB HTTP Server Configuration
-CHROMA_HOST = os.getenv('CHROMA_HOST', 'localhost')
+CHROMA_HOST = os.getenv('CHROMA_HOST', '127.0.0.1')
 CHROMA_PORT = int(os.getenv('CHROMA_PORT', '8001'))
 
 # Maximum number of subpage links allowed per competitor
