@@ -34,6 +34,10 @@ OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
 # OpenAI API Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 
+# ChromaDB HTTP Server Configuration
+CHROMA_HOST = os.getenv('CHROMA_HOST', 'localhost')
+CHROMA_PORT = int(os.getenv('CHROMA_PORT', '8001'))
+
 # Maximum number of subpage links allowed per competitor
 MAX_COMPETITOR_LINKS = int(os.getenv('MAX_COMPETITOR_LINKS', '500'))
 
