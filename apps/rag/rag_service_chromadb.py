@@ -348,56 +348,74 @@ class RAGServiceChroma:
         }
     
     def generate_answer(self, query: str, context_chunks: List[Dict]) -> str:
-        """
-        Generate answer using OpenRouter API (GPT-4o-mini).
-        
-        Args:
-            query: User query
-            context_chunks: Retrieved context chunks
-            
-        Returns:
-            Generated answer
-        """
-        # Prepare context (show full chunks for better accuracy)
-        context = "\n\n".join([
-            f"[Document {i+1}]\n"
-            f"Source: {chunk['metadata'].get('title', 'Unknown')}\n"
-            f"URL: {chunk['metadata'].get('url', 'N/A')}\n"
-            f"Content:\n{chunk['text']}"
-            for i, chunk in enumerate(context_chunks[:5])  # Use top 5 chunks
-        ])
-        
-        # Prepare prompt
-        prompt = f"""You are a helpful assistant that answers questions based on the provided context documents.
+        """Generate answer using GPT-4o-mini with retrieved context."""
 
-Context:
+        context = "\n\n".join([
+            f"[Source {i+1}]\n"
+            f"Page Title: {chunk['metadata'].get('title', 'Unknown')}\n"
+            f"Page URL: {chunk['metadata'].get('url', 'N/A')}\n"
+            f"Content:\n{chunk['text']}"
+            for i, chunk in enumerate(context_chunks[:5])
+        ])
+
+        system_prompt = """You are a professional automotive intelligence assistant for TrackRival, a competitor monitoring platform focused on the Pakistani automotive market (Honda, Suzuki, Kia).
+
+=== LANGUAGE RULES ===
+Detect the language used in the question and respond in the SAME language.
+Supported: English, Urdu script, Roman Urdu.
+If language is unclear, respond in English.
+Use Pakistani vocabulary only.
+BANNED words: kripya, dhanyavaad, namaskar, pranaam.
+Allowed Urdu words: shukriya, meherbani, bilkul, zaroor.
+
+=== ROLE ===
+You assist users in understanding competitor data including vehicle models, prices, specifications, and website content scraped from Honda Pakistan, Suzuki Pakistan, and Kia Pakistan.
+
+=== RESPONSE RULES ===
+- Answer using ONLY the provided context. Never fabricate information.
+- If context lacks the answer, say: "I don't have enough information about that in the current knowledge base."
+- Keep responses under 250 words unless listing multiple products/models.
+- When listing products, use this format:
+  Model Name:
+  Price:
+  Key Features:
+  Source: (plain text URL — never markdown links)
+- Always cite sources using the exact Page URL from context, shown as plain text. Never use labels like "Document 1" or "Source 1".
+- Never use markdown hyperlinks like [text](url). Always show URLs as plain text.
+- Use single asterisks for emphasis only (*important*).
+- Do not use tables, horizontal bars, or dashes as separators.
+- Be professional, concise, and helpful.
+
+=== OUT OF SCOPE ===
+If the question is unrelated to Honda, Suzuki, Kia, or Pakistani automotive market:
+Reply: "I can only assist with competitor data for Honda, Suzuki, and Kia Pakistan."
+
+=== PROHIBITED TOPICS ===
+Politics, religion, competitors outside the three brands, medical/legal/financial advice, personal opinions."""
+
+        user_prompt = f"""Context from competitor websites:
+
 {context}
+
+---
 
 Question: {query}
 
-Instructions:
-- Provide a comprehensive and accurate answer based ONLY on the context above
-- If the context contains relevant information, synthesize it into a clear answer
-- If the context lacks sufficient information to answer the question, clearly state that
-- Cite which document(s) support your answer when possible
+Answer based strictly on the context above. Cite the exact Page URL (plain text) for each piece of information you use."""
 
-Answer:"""
-
-        # Call OpenAI API
         api_key = settings.OPENAI_API_KEY
-
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-
         payload = {
             "model": "gpt-4o-mini",
             "messages": [
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
             ],
-            "temperature": 0.7,
-            "max_tokens": 1000
+            "temperature": 0.5,
+            "max_tokens": 800
         }
 
         try:
@@ -408,11 +426,7 @@ Answer:"""
                 timeout=30
             )
             response.raise_for_status()
-            
-            result = response.json()
-            answer = result['choices'][0]['message']['content']
-            return answer
-            
+            return response.json()['choices'][0]['message']['content']
         except Exception as e:
             return f"Error generating answer: {str(e)}"
     
@@ -483,7 +497,7 @@ Answer:"""
             'competitor_chunks': competitor_counts,
             'embedding_dimension': 384,
             'model': 'sentence-transformers/all-MiniLM-L6-v2',
-            'retrieval_method': 'hybrid (dense + BM25)',
+            'retrieval_method': 'dense (ChromaDB HNSW cosine)',
             'database': 'ChromaDB'
         }
     
