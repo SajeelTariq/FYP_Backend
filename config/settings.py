@@ -24,8 +24,8 @@ FIRECRAWL_API_KEY = os.getenv('FIRECRAWL_API_KEY', '')
 
 # Apify API Configuration
 APIFY_API_TOKEN = os.getenv('APIFY_API_TOKEN', '')
-APIFY_COMPANY_ACTOR_ID = os.getenv('APIFY_COMPANY_ACTOR_ID', 'meZYSFfylaaZzaCNN')
-APIFY_JOBS_ACTOR_ID = os.getenv('APIFY_JOBS_ACTOR_ID', 'hKByXkMQaC5Qt9UMN')
+APIFY_COMPANY_ACTOR_ID = os.getenv('APIFY_COMPANY_ACTOR_ID', 'automation-lab~linkedin-company-scraper')
+APIFY_JOBS_ACTOR_ID = os.getenv('APIFY_JOBS_ACTOR_ID', 'valig~linkedin-jobs-scraper')
 
 # OpenRouter API Configuration (used by Agno agents)
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
