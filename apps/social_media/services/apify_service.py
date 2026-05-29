@@ -10,10 +10,17 @@ Actors used:
       Input:  {"companyName": ["Honda"], "datePosted": "r604800", "limit": 50}
       Output: id, url, title, location, companyName, companyUrl, description, contractType,
               experienceLevel, postedDate
+
+  - harvestapi/linkedin-profile-posts (harvestapi~linkedin-profile-posts)
+      Input:  {"targetUrls": ["https://www.linkedin.com/company/netflix/"],
+               "postedLimitDate": "2026-05-29", "maxPosts": 50}
+      Output: id, content, linkedinUrl, postedAt, engagement{likes,comments,shares},
+              author{name, info}
 """
 import time
 import logging
 import requests
+from datetime import date
 from urllib.parse import urlparse
 from django.conf import settings
 
@@ -24,6 +31,7 @@ APIFY_BASE_URL = "https://api.apify.com/v2"
 # Actor IDs — override via settings if you switch actors
 COMPANY_ACTOR_ID = getattr(settings, 'APIFY_COMPANY_ACTOR_ID', 'automation-lab~linkedin-company-scraper')
 JOBS_ACTOR_ID = getattr(settings, 'APIFY_JOBS_ACTOR_ID', 'valig~linkedin-jobs-scraper')
+POSTS_ACTOR_ID = getattr(settings, 'APIFY_POSTS_ACTOR_ID', 'harvestapi~linkedin-profile-posts')
 
 # How long to wait (seconds) between status polls
 POLL_INTERVAL = 10
@@ -163,6 +171,50 @@ class ApifyService:
 
         logger.info(f"[Apify] Found {len(jobs)} jobs for {competitor_name}")
         return jobs
+
+    def scrape_linkedin_posts(self, linkedin_url: str, posts_since: date, max_posts: int = 50) -> list:
+        """
+        Scrape company posts using harvestapi/linkedin-profile-posts.
+        Only fetches posts on or after posts_since date — keeps costs low.
+        Returns a list of post dicts.
+        """
+        logger.info(f"[Apify] Scraping LinkedIn posts for {linkedin_url} since {posts_since}")
+
+        results = self._run_actor(POSTS_ACTOR_ID, {
+            "targetUrls": [linkedin_url],
+            "postedLimitDate": posts_since.strftime('%Y-%m-%d'),
+            "maxPosts": max_posts,
+            "scrapeReactions": False,
+            "scrapeComments": False,
+        })
+
+        posts = []
+        for p in results:
+            engagement = p.get('engagement') or {}
+            author = p.get('author') or {}
+
+            # postedAt is an object: {timestamp: ..., date: "..."}
+            posted_at_raw = p.get('postedAt')
+            if isinstance(posted_at_raw, dict):
+                posted_at = posted_at_raw.get('timestamp') or posted_at_raw.get('date')
+            else:
+                posted_at = posted_at_raw
+
+            posts.append({
+                "post_id": str(p.get('id') or p.get('linkedinUrl') or ''),
+                "content": p.get('content', ''),
+                "post_url": p.get('linkedinUrl', ''),
+                "posted_at": posted_at,
+                "author_name": author.get('name', ''),
+                "author_headline": author.get('info', ''),
+                "num_likes": int(engagement.get('likes') or 0),
+                "num_comments": int(engagement.get('comments') or 0),
+                "num_shares": int(engagement.get('shares') or 0),
+                "post_type": "post",
+            })
+
+        logger.info(f"[Apify] Found {len(posts)} posts for {linkedin_url}")
+        return posts
 
 
 # ------------------------------------------------------------------

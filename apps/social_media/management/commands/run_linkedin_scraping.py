@@ -11,6 +11,8 @@ Usage:
     # Dry run: show what would be scraped without calling Apify
     python manage.py run_linkedin_scraping --dry-run
 """
+from datetime import date, timedelta
+
 from django.core.management.base import BaseCommand
 
 from apps.monitoring.models import Competitor
@@ -32,10 +34,17 @@ class Command(BaseCommand):
             action='store_true',
             help='Print which competitors would be scraped without calling Apify.',
         )
+        parser.add_argument(
+            '--days-back',
+            type=int,
+            default=None,
+            help='Force posts_since to N days ago (e.g. --days-back 1 for yesterday). Overrides the auto date logic.',
+        )
 
     def handle(self, *args, **options):
         competitor_id = options.get('competitor_id')
         dry_run = options.get('dry_run')
+        days_back = options.get('days_back')
 
         if competitor_id:
             try:
@@ -63,10 +72,14 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("DRY RUN — no Apify calls made."))
             return
 
+        force_posts_since = date.today() - timedelta(days=days_back) if days_back is not None else None
+        if force_posts_since:
+            self.stdout.write(self.style.WARNING(f"Overriding posts_since → {force_posts_since}"))
+
         for comp in competitors:
             self.stdout.write(f"\n→ Scraping {comp.name}...")
             try:
-                result = _scrape_competitor_linkedin(comp)
+                result = _scrape_competitor_linkedin(comp, posts_since_override=force_posts_since)
                 posts = result.get('posts', {})
                 jobs = result.get('jobs', {})
                 snapshot = result.get('snapshot', {})

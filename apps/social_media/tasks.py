@@ -3,7 +3,7 @@ Celery tasks for LinkedIn social media scraping.
 Runs separately from the website scraping pipeline.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from celery import shared_task
 from django.utils import timezone as dj_timezone
@@ -74,8 +74,8 @@ def scrape_linkedin_for_competitor(competitor_id: int):
 # Internal logic (not Celery tasks)
 # ------------------------------------------------------------------
 
-def _scrape_competitor_linkedin(competitor) -> dict:
-    """Run the full LinkedIn scrape (company data + jobs) for one competitor."""
+def _scrape_competitor_linkedin(competitor, posts_since_override=None) -> dict:
+    """Run the full LinkedIn scrape (company data + posts + jobs) for one competitor."""
     from apps.social_media.services.apify_service import ApifyService, ApifyError
 
     if not competitor.linkedin_url:
@@ -89,19 +89,35 @@ def _scrape_competitor_linkedin(competitor) -> dict:
 
     result = {}
 
-    # --- Company data + posts ---
+    # --- Company snapshot (followers + employees) ---
     try:
         company_data = service.scrape_linkedin_company(competitor.linkedin_url)
-        posts_saved = _save_posts(competitor, company_data['posts'])
         snapshot_saved = _save_snapshot(
             competitor,
             company_data['follower_count'],
             company_data['employee_count'],
         )
-        result['posts'] = {"saved": posts_saved, "total": len(company_data['posts'])}
         result['snapshot'] = snapshot_saved
     except Exception as e:
         logger.error(f"[LinkedIn] Company scrape failed for {competitor.name}: {e}")
+        result['snapshot'] = {"error": str(e)}
+
+    # --- Posts (date-bounded to avoid scraping full history) ---
+    try:
+        from apps.social_media.models import SocialMediaPost
+        if posts_since_override is not None:
+            posts_since = posts_since_override
+        else:
+            has_posts = SocialMediaPost.objects.filter(
+                competitor=competitor, platform='linkedin'
+            ).exists()
+            # First run: fetch today's posts only. Daily runs: fetch yesterday's posts.
+            posts_since = date.today() if not has_posts else date.today() - timedelta(days=1)
+        posts_raw = service.scrape_linkedin_posts(competitor.linkedin_url, posts_since)
+        posts_saved = _save_posts(competitor, posts_raw)
+        result['posts'] = {"saved": posts_saved, "total": len(posts_raw), "since": str(posts_since)}
+    except Exception as e:
+        logger.error(f"[LinkedIn] Posts scrape failed for {competitor.name}: {e}")
         result['posts'] = {"error": str(e)}
 
     # --- Job listings ---
