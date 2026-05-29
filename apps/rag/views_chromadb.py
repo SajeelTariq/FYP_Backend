@@ -1,12 +1,17 @@
 """
 RAG API Views for querying the knowledge base with Agno Agent-based routing.
 """
+import json
 import os
+import time
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.authtoken.models import Token
 from django.conf import settings
+from django.http import StreamingHttpResponse, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 
 from .rag_service_chromadb import RAGServiceChroma
 from .agents.orchestrator_agno import OrchestratorAgent
@@ -174,6 +179,121 @@ def get_competitors(request):
             {'error': f'Error fetching competitors: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@csrf_exempt
+def rag_query_stream(request):
+    """
+    Streaming RAG endpoint using Server-Sent Events (SSE).
+
+    POST /api/rag/query/stream/
+    Headers: Authorization: Token <token>
+    Body:    {"query": "...", "top_k": 10, "competitor_filter": "all"}
+
+    SSE events emitted:
+      data: {"type": "metadata", "retrieved_chunks": [...], "retrieval_time": 0.1, "cache_hit": false}
+      data: {"type": "chunk", "content": "token text"}
+      data: {"type": "done", "generation_time": 2.3, "total_time": 2.5}
+      data: {"type": "error", "message": "..."}
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    # Manual token auth (DRF @api_view is incompatible with StreamingHttpResponse)
+    auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+    if not auth_header.startswith("Token "):
+        return JsonResponse({"error": "Authentication required"}, status=401)
+    try:
+        token = Token.objects.select_related("user").get(key=auth_header[6:])
+    except Token.DoesNotExist:
+        return JsonResponse({"error": "Invalid token"}, status=401)
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    query_text = body.get("query", "").strip()
+    if not query_text:
+        return JsonResponse({"error": "Query text is required"}, status=400)
+
+    top_k = body.get("top_k", None)
+    competitor_filter = body.get("competitor_filter", "all") or "all"
+
+    def event_stream():
+        start = time.time()
+        rag = RAGServiceChroma()
+        from django.conf import settings as _settings
+        top_k_val = top_k or getattr(_settings, "RAG_TOP_K", 10)
+
+        try:
+            # --- Cache check ---
+            import hashlib
+            from django.core.cache import cache
+            rag_cache_ttl = getattr(_settings, "RAG_CACHE_TTL", 7200)
+            cache_key = None
+            if rag_cache_ttl > 0:
+                raw_key = f"rag:{query_text.lower()}:{competitor_filter}:{top_k_val}"
+                cache_key = "rag_" + hashlib.md5(raw_key.encode()).hexdigest()
+                cached = cache.get(cache_key)
+                if cached is not None:
+                    # Send cached answer as a single chunk for instant response
+                    meta = {
+                        "type": "metadata",
+                        "retrieved_chunks": cached.get("retrieved_chunks", []),
+                        "retrieval_time": cached.get("retrieval_time", 0),
+                        "cache_hit": True,
+                    }
+                    yield f"data: {json.dumps(meta)}\n\n"
+                    yield f"data: {json.dumps({'type': 'chunk', 'content': cached['answer']})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'generation_time': 0, 'total_time': round(time.time() - start, 3)})}\n\n"
+                    return
+
+            # --- Retrieval ---
+            search_results = rag.semantic_search(query_text, top_k_val, competitor_filter)
+            retrieval_time = search_results["retrieval_time"]
+            chunks = search_results["results"]
+
+            meta_event = {
+                "type": "metadata",
+                "retrieved_chunks": [
+                    {"text": c["text"][:200] + "...", "metadata": c["metadata"], "score": c["fusion_score"]}
+                    for c in chunks
+                ],
+                "retrieval_time": retrieval_time,
+                "cache_hit": False,
+            }
+            yield f"data: {json.dumps(meta_event)}\n\n"
+
+            # --- Streaming generation ---
+            gen_start = time.time()
+            full_answer = []
+            for delta in rag.generate_answer_stream(query_text, chunks):
+                full_answer.append(delta)
+                yield f"data: {json.dumps({'type': 'chunk', 'content': delta})}\n\n"
+
+            generation_time = round(time.time() - gen_start, 3)
+            total_time = round(time.time() - start, 3)
+            yield f"data: {json.dumps({'type': 'done', 'generation_time': generation_time, 'total_time': total_time})}\n\n"
+
+            # --- Cache the full answer for future requests ---
+            if cache_key and rag_cache_ttl > 0:
+                cache.set(cache_key, {
+                    "answer": "".join(full_answer),
+                    "retrieved_chunks": meta_event["retrieved_chunks"],
+                    "retrieval_time": retrieval_time,
+                    "generation_time": generation_time,
+                    "total_time": total_time,
+                    "cache_hit": False,
+                }, rag_cache_ttl)
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+    response["Cache-Control"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"  # tells nginx not to buffer SSE
+    return response
 
 
 @api_view(['GET'])

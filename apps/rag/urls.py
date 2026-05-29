@@ -1,6 +1,7 @@
 from django.urls import path
 from .views_chromadb import (
     rag_query,
+    rag_query_stream,
     semantic_search,
     rag_stats,
     get_competitors,
@@ -10,6 +11,7 @@ from .views_chromadb import (
 urlpatterns = [
     # Agent-based RAG endpoints
     path('query/', rag_query, name='rag-query'),
+    path('query/stream/', rag_query_stream, name='rag-query-stream'),
     path('search/', semantic_search, name='semantic-search'),
     path('stats/', rag_stats, name='rag-stats'),
     path('competitors/', get_competitors, name='get-competitors'),
