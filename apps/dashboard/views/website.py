@@ -146,9 +146,20 @@ def change_feed(request):
     offset = (page - 1) * limit
 
     qs = HTMLDifference.objects.filter(competitor_id__in=comp_ids).select_related('competitor')
+
     competitor_id = request.query_params.get('competitor_id')
     if competitor_id:
         qs = qs.filter(competitor_id=competitor_id)
+
+    days = request.query_params.get('days')
+    if days:
+        cutoff = timezone.now() - timedelta(days=int(days))
+        qs = qs.filter(detected_at__gte=cutoff)
+
+    category = request.query_params.get('change_category')
+    if category:
+        qs = qs.filter(change_category=category)
+
     qs = qs.order_by('-detected_at')
 
     total = qs.count()
