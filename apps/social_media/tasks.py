@@ -373,21 +373,6 @@ def _scrape_competitor_facebook(competitor, posts_since_override=None) -> dict:
         logger.error(f"[Facebook] Page scrape failed for {competitor.name}: {e}")
         result['snapshot'] = {"error": str(e)}
 
-    # --- Posts (last 5 days — new posts + engagement refresh) ---
-    try:
-        posts_since = posts_since_override or (date.today() - timedelta(days=5))
-        posts_raw = service.scrape_facebook_posts(competitor.facebook_url, posts_since)
-        posts_saved = _save_posts(competitor, posts_raw, platform='facebook')
-        result['posts'] = {
-            "saved": posts_saved['created'],
-            "updated": posts_saved['updated'],
-            "total": len(posts_raw),
-            "since": str(posts_since),
-        }
-    except Exception as e:
-        logger.error(f"[Facebook] Posts scrape failed for {competitor.name}: {e}")
-        result['posts'] = {"error": str(e)}
-
     result['status'] = 'success'
     return result
 

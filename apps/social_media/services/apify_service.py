@@ -68,13 +68,26 @@ class ApifyService:
         response.raise_for_status()
         return response.json()
 
-    def _start_run(self, actor_id: str, input_data: dict) -> tuple[str, str]:
+    def _start_run(self, actor_id: str, input_data: dict, memory_mbytes: int = None) -> tuple[str, str]:
         """Start an actor run. Returns (run_id, dataset_id)."""
-        data = self._post(f"acts/{actor_id}/runs", input_data)
+        url = f"{APIFY_BASE_URL}/acts/{actor_id}/runs?token={self.token}"
+        if memory_mbytes:
+            url += f"&memory={memory_mbytes}"
+        response = requests.post(url, json=input_data, timeout=30)
+        response.raise_for_status()
+        data = response.json()
         run_id = data['data']['id']
         dataset_id = data['data']['defaultDatasetId']
         logger.info(f"[Apify] Started actor {actor_id} — run_id={run_id}")
         return run_id, dataset_id
+
+    def _run_actor(self, actor_id: str, input_data: dict, memory_mbytes: int = None) -> list:
+        """Full flow: start → wait → fetch results."""
+        run_id, dataset_id = self._start_run(actor_id, input_data, memory_mbytes)
+        status = self._wait_for_run(actor_id, run_id)
+        if status != 'SUCCEEDED':
+            raise ApifyError(f"Actor run ended with status={status}")
+        return self._fetch_dataset(dataset_id)
 
     def _wait_for_run(self, actor_id: str, run_id: str) -> str:
         """Poll until the run finishes. Returns final status."""
@@ -99,14 +112,6 @@ class ApifyService:
         if isinstance(data, list):
             return data
         return data.get('items', [])
-
-    def _run_actor(self, actor_id: str, input_data: dict) -> list:
-        """Full flow: start → wait → fetch results."""
-        run_id, dataset_id = self._start_run(actor_id, input_data)
-        status = self._wait_for_run(actor_id, run_id)
-        if status != 'SUCCEEDED':
-            raise ApifyError(f"Actor run ended with status={status}")
-        return self._fetch_dataset(dataset_id)
 
     # ------------------------------------------------------------------
     # LinkedIn-specific scrapers
@@ -257,10 +262,10 @@ class ApifyService:
         logger.info(f"[Apify] Scraping Facebook posts for {facebook_url} since {posts_since}")
 
         results = self._run_actor(FB_POSTS_ACTOR_ID, {
-            "pageUrl": facebook_url,
+            "startUrls": [{"url": facebook_url}],
             "postsAfter": posts_since.strftime('%Y-%m-%d'),
             "maxPosts": max_posts,
-        })
+        }, memory_mbytes=512)
 
         posts = []
         for p in results:

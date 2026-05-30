@@ -118,23 +118,29 @@ class Command(BaseCommand):
                 self.stdout.write(f"\n→ Scraping {comp.name}...")
                 try:
                     result = scrape_fn(comp, posts_since_override=force_posts_since)
-                    posts = result.get('posts', {})
                     snapshot = result.get('snapshot', {})
 
-                    self.stdout.write(self.style.SUCCESS(
-                        f"  ✓ Posts:    {posts.get('saved', '?')} new, "
-                        f"{posts.get('updated', '?')} engagement refreshed / {posts.get('total', '?')} total"
-                    ))
                     self.stdout.write(self.style.SUCCESS(
                         f"  ✓ Snapshot: followers={snapshot.get('follower_count')}"
                     ))
 
                     if plat == 'linkedin':
+                        posts = result.get('posts', {})
+                        self.stdout.write(self.style.SUCCESS(
+                            f"  ✓ Posts:    {posts.get('saved', '?')} new, "
+                            f"{posts.get('updated', '?')} engagement refreshed / {posts.get('total', '?')} total"
+                        ))
                         jobs = result.get('jobs', {})
                         self.stdout.write(self.style.SUCCESS(
                             f"  ✓ Jobs:     {jobs.get('new', '?')} new, "
                             f"{jobs.get('updated', '?')} updated, "
                             f"{jobs.get('deactivated', '?')} deactivated"
+                        ))
+                    elif plat == 'instagram':
+                        posts = result.get('posts', {})
+                        self.stdout.write(self.style.SUCCESS(
+                            f"  ✓ Posts:    {posts.get('saved', '?')} new, "
+                            f"{posts.get('updated', '?')} engagement refreshed / {posts.get('total', '?')} total"
                         ))
                 except Exception as e:
                     self.stderr.write(self.style.ERROR(f"  ✗ Error: {e}"))
