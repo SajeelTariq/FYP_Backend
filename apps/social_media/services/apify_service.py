@@ -228,8 +228,8 @@ class ApifyService:
 
     def scrape_facebook_page(self, facebook_url: str) -> dict:
         """
-        Scrape Facebook page profile using tropical_quince/facebook-page-scraper.
-        Returns follower_count and page name.
+        Scrape Facebook page profile using parseforge/facebook-pages-scraper.
+        Returns follower_count.
         """
         logger.info(f"[Apify] Scraping Facebook page: {facebook_url}")
         results = self._run_actor(FB_PAGE_ACTOR_ID, {
@@ -245,32 +245,33 @@ class ApifyService:
             _safe_int(page.get('followersCount'))
             or _safe_int(page.get('followers'))
             or _safe_int(page.get('likes'))
+            or _safe_int(page.get('likesCount'))
         )
         return {"follower_count": follower_count}
 
     def scrape_facebook_posts(self, facebook_url: str, posts_since: date, max_posts: int = 50) -> list:
         """
-        Scrape Facebook page posts using automation-lab/facebook-posts-scraper.
+        Scrape Facebook page posts using parseforge/facebook-posts-scraper.
         Returns a list of post dicts.
         """
         logger.info(f"[Apify] Scraping Facebook posts for {facebook_url} since {posts_since}")
 
         results = self._run_actor(FB_POSTS_ACTOR_ID, {
-            "startUrls": [{"url": facebook_url}],
+            "pageUrl": facebook_url,
+            "postsAfter": posts_since.strftime('%Y-%m-%d'),
             "maxPosts": max_posts,
-            "onlyPostsNewerThan": posts_since.strftime('%Y-%m-%d'),
         })
 
         posts = []
         for p in results:
             posts.append({
                 "post_id": str(p.get('id') or p.get('postId') or p.get('url') or ''),
-                "content": p.get('text') or p.get('message') or '',
+                "content": p.get('text') or p.get('content') or p.get('message') or '',
                 "post_url": p.get('url') or p.get('postUrl') or '',
-                "posted_at": p.get('time') or p.get('timestamp') or p.get('createdTime'),
+                "posted_at": p.get('date') or p.get('time') or p.get('timestamp') or p.get('createdTime'),
                 "author_name": p.get('pageName') or p.get('authorName') or '',
                 "author_headline": '',
-                "num_likes": int(p.get('likesCount') or p.get('likes') or 0),
+                "num_likes": int(p.get('likesCount') or p.get('likes') or p.get('reactions') or 0),
                 "num_comments": int(p.get('commentsCount') or p.get('comments') or 0),
                 "num_shares": int(p.get('sharesCount') or p.get('shares') or 0),
                 "post_type": "post",

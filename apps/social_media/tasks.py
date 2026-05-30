@@ -263,7 +263,7 @@ def _save_posts(competitor, posts: list, platform: str = 'linkedin') -> dict:
             updated_count += 1
 
     logger.info(
-        f"[LinkedIn] {competitor.name}: {created_count} new posts, {updated_count} engagement refreshed"
+        f"[{platform.capitalize()}] {competitor.name}: {created_count} new posts, {updated_count} engagement refreshed"
     )
     return {"created": created_count, "updated": updated_count}
 

@@ -1,5 +1,32 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
+
+
+def _require_domain(url, allowed_domains, field_label):
+    if not url:
+        return
+    url_lower = url.lower()
+    if not any(d in url_lower for d in allowed_domains):
+        raise ValidationError(
+            f"Invalid {field_label} URL. Must be a {field_label} link (e.g. {allowed_domains[0]})."
+        )
+
+
+def validate_linkedin_url(url):
+    _require_domain(url, ['linkedin.com'], 'LinkedIn')
+
+
+def validate_facebook_url(url):
+    _require_domain(url, ['facebook.com', 'fb.com'], 'Facebook')
+
+
+def validate_instagram_url(url):
+    _require_domain(url, ['instagram.com'], 'Instagram')
+
+
+def validate_twitter_url(url):
+    _require_domain(url, ['twitter.com', 'x.com'], 'Twitter/X')
 
 
 class Competitor(models.Model):
@@ -7,10 +34,10 @@ class Competitor(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='competitors')
     name = models.CharField(max_length=255)
     website_base_url = models.URLField(blank=True, null=True)
-    linkedin_url = models.URLField(blank=True, null=True)
-    facebook_url = models.URLField(blank=True, null=True)
-    instagram_url = models.URLField(blank=True, null=True)
-    twitter_url = models.URLField(blank=True, null=True)
+    linkedin_url = models.URLField(blank=True, null=True, validators=[validate_linkedin_url])
+    facebook_url = models.URLField(blank=True, null=True, validators=[validate_facebook_url])
+    instagram_url = models.URLField(blank=True, null=True, validators=[validate_instagram_url])
+    twitter_url = models.URLField(blank=True, null=True, validators=[validate_twitter_url])
     is_deleted = models.BooleanField(default=False)
     change_count = models.PositiveIntegerField(default=0, help_text="Running total of detected changes")
     created_at = models.DateTimeField(auto_now_add=True)

@@ -1,10 +1,29 @@
 from rest_framework import serializers
 from .models import (
-    Competitor, MonitoringTask, ExtractedLinks, 
+    Competitor, MonitoringTask, ExtractedLinks,
     FilteredLinks, DailyScraperLinks, CompetitorHTML, CompetitorMetadata,
     HTMLSnapshot, HTMLDifference
 )
 from django.contrib.auth.models import User
+
+
+_PLATFORM_DOMAINS = {
+    'linkedin_url':  (['linkedin.com'], 'LinkedIn'),
+    'facebook_url':  (['facebook.com', 'fb.com'], 'Facebook'),
+    'instagram_url': (['instagram.com'], 'Instagram'),
+    'twitter_url':   (['twitter.com', 'x.com'], 'Twitter/X'),
+}
+
+
+def _validate_social_url(field_name, value):
+    """Raise ValidationError if value doesn't match the expected domain for the field."""
+    if not value:
+        return value
+    domains, label = _PLATFORM_DOMAINS[field_name]
+    if not any(d in value.lower() for d in domains):
+        raise serializers.ValidationError(
+            f"Must be a valid {label} URL (e.g. {domains[0]})."
+        )
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -47,8 +66,23 @@ class CompetitorSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'onboarding_status', 'onboarding_error', 'created_at', 'updated_at']
 
+    def validate_linkedin_url(self, value):
+        _validate_social_url('linkedin_url', value)
+        return value
+
+    def validate_facebook_url(self, value):
+        _validate_social_url('facebook_url', value)
+        return value
+
+    def validate_instagram_url(self, value):
+        _validate_social_url('instagram_url', value)
+        return value
+
+    def validate_twitter_url(self, value):
+        _validate_social_url('twitter_url', value)
+        return value
+
     def validate(self, data):
-        # At least one URL must be provided
         urls = [
             data.get('website_base_url'),
             data.get('linkedin_url'),
@@ -73,8 +107,23 @@ class CompetitorCreateUpdateSerializer(serializers.Serializer):
     twitter_url = serializers.CharField(required=False, allow_blank=True, max_length=2000)
     stock_symbol = serializers.CharField(required=False, allow_blank=True, max_length=20)
 
+    def validate_linkedin_url(self, value):
+        _validate_social_url('linkedin_url', value)
+        return value
+
+    def validate_facebook_url(self, value):
+        _validate_social_url('facebook_url', value)
+        return value
+
+    def validate_instagram_url(self, value):
+        _validate_social_url('instagram_url', value)
+        return value
+
+    def validate_twitter_url(self, value):
+        _validate_social_url('twitter_url', value)
+        return value
+
     def validate(self, data):
-        # At least one URL must be provided
         urls = [
             data.get('website_base_url'),
             data.get('linkedin_url'),
