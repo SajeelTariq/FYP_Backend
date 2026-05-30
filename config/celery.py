@@ -23,7 +23,15 @@ app.conf.beat_schedule = {
     },
     'daily-linkedin-monitoring': {
         'task': 'apps.social_media.tasks.run_linkedin_monitoring',
-        'schedule': crontab(hour=3, minute=0),  # Run daily at 3 AM (1h after website scraping)
+        'schedule': crontab(hour=3, minute=0),  # 3 AM daily
+    },
+    'daily-facebook-monitoring': {
+        'task': 'apps.social_media.tasks.run_facebook_monitoring',
+        'schedule': crontab(hour=3, minute=20),  # 3:20 AM daily
+    },
+    'daily-instagram-monitoring': {
+        'task': 'apps.social_media.tasks.run_instagram_monitoring',
+        'schedule': crontab(hour=3, minute=40),  # 3:40 AM daily
     },
     'fetch-competitors-news': {
         'task': 'apps.scraping.tasks.fetch_all_competitors_news',

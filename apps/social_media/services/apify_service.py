@@ -32,6 +32,9 @@ APIFY_BASE_URL = "https://api.apify.com/v2"
 COMPANY_ACTOR_ID = getattr(settings, 'APIFY_COMPANY_ACTOR_ID', 'automation-lab~linkedin-company-scraper')
 JOBS_ACTOR_ID = getattr(settings, 'APIFY_JOBS_ACTOR_ID', 'valig~linkedin-jobs-scraper')
 POSTS_ACTOR_ID = getattr(settings, 'APIFY_POSTS_ACTOR_ID', 'harvestapi~linkedin-profile-posts')
+FB_POSTS_ACTOR_ID = getattr(settings, 'APIFY_FB_POSTS_ACTOR_ID', 'automation-lab~facebook-posts-scraper')
+FB_PAGE_ACTOR_ID = getattr(settings, 'APIFY_FB_PAGE_ACTOR_ID', 'tropical_quince~facebook-page-scraper')
+INSTAGRAM_ACTOR_ID = getattr(settings, 'APIFY_INSTAGRAM_ACTOR_ID', 'apify~instagram-scraper')
 
 # How long to wait (seconds) between status polls
 POLL_INTERVAL = 10
@@ -214,6 +217,127 @@ class ApifyService:
             })
 
         logger.info(f"[Apify] Found {len(posts)} posts for {linkedin_url}")
+        return posts
+
+
+    # ------------------------------------------------------------------
+    # Facebook-specific scrapers
+    # NOTE: Field names below are based on actor documentation and may need
+    # adjustment after first test run — check actual output in Apify console.
+    # ------------------------------------------------------------------
+
+    def scrape_facebook_page(self, facebook_url: str) -> dict:
+        """
+        Scrape Facebook page profile using tropical_quince/facebook-page-scraper.
+        Returns follower_count and page name.
+        """
+        logger.info(f"[Apify] Scraping Facebook page: {facebook_url}")
+        results = self._run_actor(FB_PAGE_ACTOR_ID, {
+            "startUrls": [{"url": facebook_url}],
+        })
+
+        if not results:
+            logger.warning(f"[Apify] No Facebook page data returned for {facebook_url}")
+            return {"follower_count": None}
+
+        page = results[0]
+        follower_count = (
+            _safe_int(page.get('followersCount'))
+            or _safe_int(page.get('followers'))
+            or _safe_int(page.get('likes'))
+        )
+        return {"follower_count": follower_count}
+
+    def scrape_facebook_posts(self, facebook_url: str, posts_since: date, max_posts: int = 50) -> list:
+        """
+        Scrape Facebook page posts using automation-lab/facebook-posts-scraper.
+        Returns a list of post dicts.
+        """
+        logger.info(f"[Apify] Scraping Facebook posts for {facebook_url} since {posts_since}")
+
+        results = self._run_actor(FB_POSTS_ACTOR_ID, {
+            "startUrls": [{"url": facebook_url}],
+            "maxPosts": max_posts,
+            "onlyPostsNewerThan": posts_since.strftime('%Y-%m-%d'),
+        })
+
+        posts = []
+        for p in results:
+            posts.append({
+                "post_id": str(p.get('id') or p.get('postId') or p.get('url') or ''),
+                "content": p.get('text') or p.get('message') or '',
+                "post_url": p.get('url') or p.get('postUrl') or '',
+                "posted_at": p.get('time') or p.get('timestamp') or p.get('createdTime'),
+                "author_name": p.get('pageName') or p.get('authorName') or '',
+                "author_headline": '',
+                "num_likes": int(p.get('likesCount') or p.get('likes') or 0),
+                "num_comments": int(p.get('commentsCount') or p.get('comments') or 0),
+                "num_shares": int(p.get('sharesCount') or p.get('shares') or 0),
+                "post_type": "post",
+            })
+
+        logger.info(f"[Apify] Found {len(posts)} Facebook posts for {facebook_url}")
+        return posts
+
+    # ------------------------------------------------------------------
+    # Instagram-specific scrapers
+    # NOTE: Field names below are based on actor documentation and may need
+    # adjustment after first test run — check actual output in Apify console.
+    # ------------------------------------------------------------------
+
+    def scrape_instagram_profile(self, instagram_url: str) -> dict:
+        """
+        Scrape Instagram profile for follower count using apify/instagram-scraper.
+        Returns follower_count.
+        """
+        logger.info(f"[Apify] Scraping Instagram profile: {instagram_url}")
+        results = self._run_actor(INSTAGRAM_ACTOR_ID, {
+            "directUrls": [instagram_url],
+            "resultsType": "details",
+            "resultsLimit": 1,
+        })
+
+        if not results:
+            logger.warning(f"[Apify] No Instagram profile data returned for {instagram_url}")
+            return {"follower_count": None}
+
+        profile = results[0]
+        follower_count = (
+            _safe_int(profile.get('followersCount'))
+            or _safe_int(profile.get('followers'))
+        )
+        return {"follower_count": follower_count}
+
+    def scrape_instagram_posts(self, instagram_url: str, posts_since: date, max_posts: int = 50) -> list:
+        """
+        Scrape Instagram profile posts using apify/instagram-scraper.
+        Returns a list of post dicts.
+        """
+        logger.info(f"[Apify] Scraping Instagram posts for {instagram_url} since {posts_since}")
+
+        results = self._run_actor(INSTAGRAM_ACTOR_ID, {
+            "directUrls": [instagram_url],
+            "resultsType": "posts",
+            "resultsLimit": max_posts,
+            "onlyPostsNewerThan": posts_since.strftime('%Y-%m-%d'),
+        })
+
+        posts = []
+        for p in results:
+            posts.append({
+                "post_id": str(p.get('id') or p.get('shortCode') or p.get('url') or ''),
+                "content": p.get('caption') or p.get('text') or '',
+                "post_url": p.get('url') or p.get('displayUrl') or '',
+                "posted_at": p.get('timestamp') or p.get('time'),
+                "author_name": p.get('ownerUsername') or p.get('ownerFullName') or '',
+                "author_headline": '',
+                "num_likes": int(p.get('likesCount') or p.get('likes') or 0),
+                "num_comments": int(p.get('commentsCount') or p.get('comments') or 0),
+                "num_shares": 0,  # Instagram does not expose share counts
+                "post_type": "post",
+            })
+
+        logger.info(f"[Apify] Found {len(posts)} Instagram posts for {instagram_url}")
         return posts
 
 

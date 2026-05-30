@@ -5,6 +5,8 @@ from apps.monitoring.models import Competitor
 class SocialMediaPost(models.Model):
     PLATFORM_CHOICES = [
         ('linkedin', 'LinkedIn'),
+        ('facebook', 'Facebook'),
+        ('instagram', 'Instagram'),
         ('twitter', 'Twitter'),
     ]
     POST_TYPE_CHOICES = [
@@ -76,6 +78,8 @@ class SocialMediaSnapshot(models.Model):
     """Daily snapshot of follower/employee counts for trend tracking."""
     PLATFORM_CHOICES = [
         ('linkedin', 'LinkedIn'),
+        ('facebook', 'Facebook'),
+        ('instagram', 'Instagram'),
         ('twitter', 'Twitter'),
     ]
 
