@@ -11,9 +11,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.monitoring.models import Competitor, HTMLDifference, NewsArticle
-from apps.dashboard.services.fmp import fmp_get
-
-SIX_HOURS = 60 * 60 * 6
 
 
 def _get_competitor(competitor_id, user):
@@ -30,8 +27,7 @@ def news_feed(request):
     6.1 — All Competitors News Feed
 
     Returns latest news across all user's competitors in one feed,
-    sorted by published_at descending. Competitor name is included
-    on each article for the frontend to display.
+    sorted by published_at descending.
 
     Query params:
       ?days=6    (default 6)
@@ -46,7 +42,6 @@ def news_feed(request):
         user=request.user, is_deleted=False
     ).values_list('id', flat=True)
 
-    # Deduplicate by URL — keep one article per unique URL (lowest id wins)
     unique_ids = (
         NewsArticle.objects
         .filter(competitor_id__in=competitor_ids, published_at__gte=cutoff)
@@ -84,10 +79,7 @@ def news_correlation(request, competitor_id):
     """
     6.5 — Website Change + News Correlation
 
-    Primary data: HTMLDifference records from DB (always available).
-    News overlay: attempted via FMP stable/news/stock-latest (requires paid plan).
-    If FMP news is unavailable, timeline still returns with empty news_articles
-    and news_available=false so the frontend can handle it gracefully.
+    Correlates web changes (DB) with news articles (DB via Google News scraping).
 
     Query params:
       ?days=60  (default 60)
@@ -98,9 +90,7 @@ def news_correlation(request, competitor_id):
 
     days = int(request.query_params.get('days', 60))
     cutoff = timezone.now() - timedelta(days=days)
-    symbol = getattr(comp, 'stock_symbol', None)
 
-    # ── DB: web changes grouped by date ──────────────────────────────────────
     db_changes = (
         HTMLDifference.objects
         .filter(competitor_id=competitor_id, detected_at__gte=cutoff)
@@ -117,30 +107,17 @@ def news_correlation(request, competitor_id):
             "summary": c['llm_summary'],
         })
 
-    # ── FMP: news best-effort overlay ─────────────────────────────────────────
     news_by_date: dict = defaultdict(list)
-    news_available = False
+    news_qs = (
+        NewsArticle.objects
+        .filter(competitor_id=competitor_id, published_at__gte=cutoff)
+        .values('title', 'source', 'url', 'published_at')
+        .order_by('published_at')
+    )
+    for a in news_qs:
+        d = a['published_at'].date().isoformat()
+        news_by_date[d].append({"title": a['title'], "source": a['source'], "url": a['url']})
 
-    if symbol:
-        try:
-            raw, _ = fmp_get(
-                "news/stock-latest",
-                f"fmp_news_{symbol}_200",
-                SIX_HOURS,
-                params={"symbols": symbol, "limit": 200},
-            )
-            for a in (raw or []):
-                d = (a.get("publishedDate") or a.get("date") or "")[:10]
-                if d:
-                    news_by_date[d].append({
-                        "title": a.get("title"),
-                        "source": a.get("site") or a.get("source"),
-                    })
-            news_available = True
-        except RuntimeError:
-            pass
-
-    # ── Merge on shared timeline ───────────────────────────────────────────────
     all_dates = sorted(set(list(changes_by_date.keys()) + list(news_by_date.keys())))
     timeline = [
         {
@@ -157,8 +134,6 @@ def news_correlation(request, competitor_id):
 
     return Response({
         "available": True,
-        "news_available": news_available,
         "competitor_id": comp.pk,
-        "stock_symbol": symbol,
         "timeline": timeline,
     })

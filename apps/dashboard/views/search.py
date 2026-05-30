@@ -4,34 +4,44 @@ Company symbol search — used by the "Add Competitor" modal.
 Flow:
   1. User types company name → clicks Search
   2. Frontend hits GET /api/dashboard/search-symbol/?name=Apple
-  3. Backend calls FMP /stable/search-name, deduplicates, prioritises
-     major exchanges (NASDAQ/NYSE first), strips crypto/OTC noise
+  3. Backend calls yf.Search, filters to equities only, deduplicates
   4. Frontend shows the list → user picks one → symbol stored on competitor
 """
+import yfinance as yf
+from django.core.cache import cache
+from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status
 
-from apps.dashboard.services.fmp import fmp_get
-
-# Exchanges we surface first — in priority order
-PRIMARY_EXCHANGES = ['NASDAQ', 'NYSE', 'LSE', 'TSX', 'ASX', 'EURONEXT', 'NSE', 'BSE']
-
-# Exchanges we hide entirely — too noisy / irrelevant
-EXCLUDED_EXCHANGES = ['CRYPTO', 'OTC', 'PNK', 'CCC']
-
-# Short cache — search results don't need to last long
 TEN_MINUTES = 60 * 10
 
+# Yahoo Finance internal exchange codes → display names
+EXCHANGE_MAP = {
+    'NMS': 'NASDAQ', 'NGM': 'NASDAQ', 'NCM': 'NASDAQ',
+    'NYQ': 'NYSE',   'NYE': 'NYSE',
+    'PCX': 'NYSE Arca',
+    'BTS': 'NYSE',
+    'LSE': 'LSE',
+    'TOR': 'TSX',
+    'ASX': 'ASX',
+}
 
-def _sort_key(result):
-    """Primary exchanges first, then alphabetical by exchange name."""
-    exchange = result.get('exchange', '')
+PRIMARY_EXCHANGES = ['NASDAQ', 'NYSE', 'LSE', 'TSX', 'ASX']
+
+EXCLUDED_QUOTE_TYPES = {'CRYPTOCURRENCY', 'CURRENCY', 'FUTURE', 'OPTION', 'INDEX', 'MUTUALFUND'}
+
+
+def _exchange_display(q: dict) -> str:
+    raw = q.get('exchange', '')
+    return EXCHANGE_MAP.get(raw, q.get('exchDisp', raw))
+
+
+def _sort_key(exchange: str, name: str):
     try:
-        return (PRIMARY_EXCHANGES.index(exchange), result.get('name', ''))
+        return (PRIMARY_EXCHANGES.index(exchange), name)
     except ValueError:
-        return (len(PRIMARY_EXCHANGES), result.get('name', ''))
+        return (len(PRIMARY_EXCHANGES), name)
 
 
 @api_view(['GET'])
@@ -41,20 +51,14 @@ def search_symbol(request):
     Search for a company by name and return matching stock symbols.
 
     Query params:
-      name (required) — company name to search e.g. "Apple", "Microsoft"
-      limit           — max results to return (default 10, max 20)
+      name  (required) — company name e.g. "Apple", "Microsoft"
+      limit — max results (default 10, max 20)
 
     Response:
     {
       "query": "Apple",
       "results": [
-        {
-          "symbol": "AAPL",
-          "name": "Apple Inc.",
-          "exchange": "NASDAQ",
-          "exchange_full": "NASDAQ Global Select",
-          "currency": "USD"
-        },
+        {"symbol": "AAPL", "name": "Apple Inc.", "exchange": "NASDAQ", "currency": "USD"},
         ...
       ]
     }
@@ -67,52 +71,42 @@ def search_symbol(request):
         )
 
     limit = min(int(request.query_params.get('limit', 10)), 20)
-    cache_key = f"fmp_search_{name.lower().replace(' ', '_')}"
+    cache_key = f"yf_search_{name.lower().replace(' ', '_')}"
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response({"query": name, "results": cached})
 
     try:
-        raw, _ = fmp_get(
-            "search-name",
-            cache_key,
-            TEN_MINUTES,
-            params={"query": name, "limit": 50},   # fetch more, we filter down
-        )
-    except RuntimeError:
+        quotes = yf.Search(name, max_results=30).quotes
+    except Exception:
         return Response(
-            {"error": "FMP search unavailable. Try again shortly.", "code": "UPSTREAM_ERROR"},
+            {"error": "Symbol search unavailable. Try again shortly.", "code": "UPSTREAM_ERROR"},
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
-    # Filter out unwanted exchanges
-    filtered = [
-        r for r in (raw or [])
-        if r.get('exchange') not in EXCLUDED_EXCHANGES
-    ]
-
-    # Deduplicate: if the same company appears on multiple exchanges,
-    # keep the best-ranked one only
     seen_names = {}
-    for r in filtered:
-        n = r.get('name', '').lower()
-        if n not in seen_names:
-            seen_names[n] = r
+    for q in quotes:
+        if q.get('quoteType') in EXCLUDED_QUOTE_TYPES:
+            continue
+
+        display_name = q.get('longname') or q.get('shortname') or ''
+        symbol = q.get('symbol', '')
+        if not display_name or not symbol:
+            continue
+
+        exchange = _exchange_display(q)
+        key = display_name.lower()
+
+        if key not in seen_names:
+            seen_names[key] = {'symbol': symbol, 'name': display_name,
+                               'exchange': exchange, 'currency': q.get('currency')}
         else:
-            # Replace if current exchange is higher priority
-            existing_key = _sort_key(seen_names[n])
-            current_key = _sort_key(r)
-            if current_key < existing_key:
-                seen_names[n] = r
+            existing = seen_names[key]
+            if _sort_key(exchange, display_name) < _sort_key(existing['exchange'], existing['name']):
+                seen_names[key] = {'symbol': symbol, 'name': display_name,
+                                   'exchange': exchange, 'currency': q.get('currency')}
 
-    deduplicated = sorted(seen_names.values(), key=_sort_key)
-
-    results = [
-        {
-            "symbol":        r.get("symbol"),
-            "name":          r.get("name"),
-            "exchange":      r.get("exchange"),
-            "exchange_full": r.get("exchangeFullName"),
-            "currency":      r.get("currency"),
-        }
-        for r in deduplicated[:limit]
-    ]
-
+    results = sorted(seen_names.values(), key=lambda r: _sort_key(r['exchange'], r['name']))[:limit]
+    cache.set(cache_key, results, TEN_MINUTES)
     return Response({"query": name, "results": results})

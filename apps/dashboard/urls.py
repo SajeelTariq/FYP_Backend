@@ -2,7 +2,7 @@ from django.urls import path
 
 from apps.dashboard.views.overview import overview, scraping_health
 from apps.dashboard.views.financial import (
-    financial_profile, market_cap, employee_count, executives,
+    financial_profile, market_cap, employee_count,
     income_statement, financial_growth, financial_ratios,
     financial_rating, revenue_per_employee,
 )
@@ -39,7 +39,6 @@ urlpatterns = [
     path('financial-profile/<int:competitor_id>/profile/', financial_profile, name='financial-profile'),
     path('financial-profile/<int:competitor_id>/market-cap/', market_cap, name='market-cap'),
     path('financial-profile/<int:competitor_id>/employee-count/', employee_count, name='employee-count'),
-    path('financial-profile/<int:competitor_id>/executives/', executives, name='executives'),
 
     # ── Section 2 — Financial Health ──────────────────────────────────────────
     path('financial-health/<int:competitor_id>/income/', income_statement, name='income-statement'),

@@ -239,9 +239,6 @@ LOGGING = {
 # Scripts Configuration
 SCRIPTS_DIR = BASE_DIR / 'scripts'
 
-# Financial Modeling Prep API
-FMP_API_KEY = os.getenv('FMP_API_KEY', '')
-FMP_BASE_URL = os.getenv('FMP_BASE_URL', 'https://financialmodelingprep.com/stable')
 
 # Cache — LocMemCache by default; switch to django-redis in production:
 # pip install django-redis, then set CACHE_BACKEND=django_redis.cache.RedisCache
