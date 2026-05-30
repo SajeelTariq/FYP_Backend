@@ -108,14 +108,17 @@ def _scrape_competitor_linkedin(competitor, posts_since_override=None) -> dict:
         if posts_since_override is not None:
             posts_since = posts_since_override
         else:
-            has_posts = SocialMediaPost.objects.filter(
-                competitor=competitor, platform='linkedin'
-            ).exists()
-            # First run: fetch today's posts only. Daily runs: fetch yesterday's posts.
-            posts_since = date.today() if not has_posts else date.today() - timedelta(days=1)
+            # Always scrape last 7 days — covers both new post discovery and
+            # engagement refresh (likes/comments/shares) on recent posts.
+            posts_since = date.today() - timedelta(days=7)
         posts_raw = service.scrape_linkedin_posts(competitor.linkedin_url, posts_since)
         posts_saved = _save_posts(competitor, posts_raw)
-        result['posts'] = {"saved": posts_saved, "total": len(posts_raw), "since": str(posts_since)}
+        result['posts'] = {
+            "saved": posts_saved['created'],
+            "updated": posts_saved['updated'],
+            "total": len(posts_raw),
+            "since": str(posts_since),
+        }
     except Exception as e:
         logger.error(f"[LinkedIn] Posts scrape failed for {competitor.name}: {e}")
         result['posts'] = {"error": str(e)}
@@ -133,14 +136,18 @@ def _scrape_competitor_linkedin(competitor, posts_since_override=None) -> dict:
     return result
 
 
-def _save_posts(competitor, posts: list) -> int:
+def _save_posts(competitor, posts: list) -> dict:
     """
-    Save new posts to DB. Skips posts already in DB (deduplication via post_id).
-    Returns count of newly saved posts.
+    Upsert posts in DB.
+    - New posts: created.
+    - Existing posts: engagement numbers (likes/comments/shares) refreshed.
+    Returns counts of created and updated posts.
     """
     from apps.social_media.models import SocialMediaPost
 
-    saved = 0
+    created_count = 0
+    updated_count = 0
+
     for p in posts:
         post_id = p.get('post_id', '').strip()
         if not post_id:
@@ -148,7 +155,7 @@ def _save_posts(competitor, posts: list) -> int:
 
         posted_at = _parse_dt(p.get('posted_at'))
 
-        _, created = SocialMediaPost.objects.get_or_create(
+        obj, created = SocialMediaPost.objects.get_or_create(
             competitor=competitor,
             platform='linkedin',
             post_id=post_id,
@@ -165,10 +172,18 @@ def _save_posts(competitor, posts: list) -> int:
             },
         )
         if created:
-            saved += 1
+            created_count += 1
+        else:
+            obj.num_likes = p.get('num_likes', 0)
+            obj.num_comments = p.get('num_comments', 0)
+            obj.num_shares = p.get('num_shares', 0)
+            obj.save(update_fields=['num_likes', 'num_comments', 'num_shares'])
+            updated_count += 1
 
-    logger.info(f"[LinkedIn] {competitor.name}: {saved}/{len(posts)} new posts saved")
-    return saved
+    logger.info(
+        f"[LinkedIn] {competitor.name}: {created_count} new posts, {updated_count} engagement refreshed"
+    )
+    return {"created": created_count, "updated": updated_count}
 
 
 def _save_jobs(competitor, jobs: list) -> dict:

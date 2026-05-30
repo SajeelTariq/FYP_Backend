@@ -85,7 +85,8 @@ class Command(BaseCommand):
                 snapshot = result.get('snapshot', {})
 
                 self.stdout.write(self.style.SUCCESS(
-                    f"  ✓ Posts:    {posts.get('saved', '?')} new / {posts.get('total', '?')} total"
+                    f"  ✓ Posts:    {posts.get('saved', '?')} new, "
+                    f"{posts.get('updated', '?')} engagement refreshed / {posts.get('total', '?')} total"
                 ))
                 self.stdout.write(self.style.SUCCESS(
                     f"  ✓ Jobs:     {jobs.get('new', '?')} new, "
