@@ -136,7 +136,9 @@ def new_vs_closed(request):
     closed_count = qs_base.filter(is_active=False).count()
 
     ratio = round(new_count / closed_count, 2) if closed_count else None
-    if ratio is None:
+    if new_count == 0 and closed_count == 0:
+        signal = "no_data"
+    elif ratio is None:
         signal = "growing"
     elif ratio > 1.2:
         signal = "growing"
