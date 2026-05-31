@@ -28,6 +28,7 @@ def change_heatmap(request):
     qs = HTMLDifference.objects.filter(
         competitor_id__in=comp_ids,
         detected_at__gte=cutoff,
+        is_onboarding_snapshot=False,
     )
     competitor_id = request.query_params.get('competitor_id')
     if competitor_id:
@@ -59,7 +60,7 @@ def change_heatmap(request):
 def change_type_breakdown(request):
     """3.2 — Change Type Breakdown"""
     comp_ids = _user_competitor_ids(request.user)
-    qs = HTMLDifference.objects.filter(competitor_id__in=comp_ids)
+    qs = HTMLDifference.objects.filter(competitor_id__in=comp_ids, is_onboarding_snapshot=False)
 
     competitor_id = request.query_params.get('competitor_id')
     if competitor_id:
@@ -83,7 +84,7 @@ def significance_trend(request):
     cutoff = timezone.now() - timedelta(weeks=weeks)
     comp_ids = _user_competitor_ids(request.user)
 
-    qs = HTMLDifference.objects.filter(competitor_id__in=comp_ids, detected_at__gte=cutoff)
+    qs = HTMLDifference.objects.filter(competitor_id__in=comp_ids, detected_at__gte=cutoff, is_onboarding_snapshot=False)
     competitor_id = request.query_params.get('competitor_id')
     if competitor_id:
         qs = qs.filter(competitor_id=competitor_id)
@@ -120,7 +121,7 @@ def changes_per_competitor(request):
 
     data = (
         HTMLDifference.objects
-        .filter(competitor_id__in=comp_ids, detected_at__gte=cutoff)
+        .filter(competitor_id__in=comp_ids, detected_at__gte=cutoff, is_onboarding_snapshot=False)
         .values('competitor_id', 'competitor__name')
         .annotate(
             total=Count('id'),
@@ -206,7 +207,7 @@ def change_velocity(request):
     cutoff = timezone.now() - timedelta(days=days + 7)
     comp_ids = _user_competitor_ids(request.user)
 
-    qs = HTMLDifference.objects.filter(competitor_id__in=comp_ids, detected_at__gte=cutoff)
+    qs = HTMLDifference.objects.filter(competitor_id__in=comp_ids, detected_at__gte=cutoff, is_onboarding_snapshot=False)
     competitor_id = request.query_params.get('competitor_id')
     if competitor_id:
         qs = qs.filter(competitor_id=competitor_id)
