@@ -73,8 +73,15 @@ def extract_competitor_links_sync(competitor_id):
         if not links:
             return {"status": "warning", "message": "No subpage links found for this website"}
         
-        # Firecrawl /v2/map returns links as a list of strings
-        extracted_urls = links
+        # Firecrawl /v2/map returns links as strings; normalize defensively in case format changes
+        extracted_urls = []
+        for link in links:
+            if isinstance(link, str):
+                extracted_urls.append(link)
+            elif isinstance(link, dict):
+                url_val = link.get('url') or link.get('link') or ''
+                if url_val:
+                    extracted_urls.append(url_val)
         
         # Enforce maximum link count
         if len(extracted_urls) > MAX_COMPETITOR_LINKS:
@@ -178,8 +185,15 @@ def extract_competitor_links(competitor_id):
             logger.warning(f"No links found for {competitor.name}")
             return {"status": "warning", "message": "No links found"}
         
-        # Firecrawl /v2/map returns links as a list of strings
-        extracted_urls = links
+        # Firecrawl /v2/map returns links as strings; normalize defensively in case format changes
+        extracted_urls = []
+        for link in links:
+            if isinstance(link, str):
+                extracted_urls.append(link)
+            elif isinstance(link, dict):
+                url_val = link.get('url') or link.get('link') or ''
+                if url_val:
+                    extracted_urls.append(url_val)
         
         # Enforce maximum link count
         if len(extracted_urls) > MAX_COMPETITOR_LINKS:
@@ -686,6 +700,10 @@ def _step2_scrape_html(competitor, urls_to_scrape):
     scraped_html = {}
 
     for url in urls_to_scrape:
+        if isinstance(url, dict):
+            url = url.get('url') or url.get('link') or ''
+        if not url or not isinstance(url, str):
+            continue
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True, args=[
