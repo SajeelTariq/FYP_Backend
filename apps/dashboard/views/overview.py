@@ -27,11 +27,11 @@ def overview(request):
     total_competitors = len(comp_ids)
 
     web_changes_30d = HTMLDifference.objects.filter(
-        competitor_id__in=comp_ids, detected_at__gte=cutoff_30
+        competitor_id__in=comp_ids, detected_at__gte=cutoff_30, is_onboarding_snapshot=False
     ).count()
 
     significant_changes_30d = HTMLDifference.objects.filter(
-        competitor_id__in=comp_ids, detected_at__gte=cutoff_30, is_significant=True
+        competitor_id__in=comp_ids, detected_at__gte=cutoff_30, is_significant=True, is_onboarding_snapshot=False
     ).count()
 
     active_jobs = JobPosting.objects.filter(competitor_id__in=comp_ids, is_active=True).count()
