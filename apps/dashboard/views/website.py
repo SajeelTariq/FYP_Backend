@@ -65,6 +65,11 @@ def change_type_breakdown(request):
     if competitor_id:
         qs = qs.filter(competitor_id=competitor_id)
 
+    days = request.query_params.get('days')
+    if days:
+        cutoff = timezone.now() - timedelta(days=int(days))
+        qs = qs.filter(detected_at__gte=cutoff)
+
     breakdown = list(qs.values('change_type').annotate(count=Count('id')))
     total = sum(r['count'] for r in breakdown)
     return Response({"breakdown": breakdown, "total": total})
