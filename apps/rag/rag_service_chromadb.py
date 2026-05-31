@@ -48,7 +48,7 @@ Reply: "I can only assist with questions about your monitored competitors and th
 === PROHIBITED TOPICS ===
 Politics, religion, medical/legal/financial advice, personal opinions, or any content unrelated to competitive intelligence."""
 CHROMA_PORT = getattr(settings, 'CHROMA_PORT', 8001)
-RAG_TOP_K = getattr(settings, 'RAG_TOP_K', 10)
+RAG_TOP_K = getattr(settings, 'RAG_TOP_K', 20)
 RAG_CACHE_TTL = getattr(settings, 'RAG_CACHE_TTL', 7200)
 
 # Loaded once at import time, shared across all RAGServiceChroma instances and workers
