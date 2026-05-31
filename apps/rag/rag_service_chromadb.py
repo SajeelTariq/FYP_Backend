@@ -324,15 +324,16 @@ class RAGServiceChroma:
         query_embedding = self.generate_embedding(query)
 
         has_comp = competitor_filter and competitor_filter.lower() != 'all'
+        comp_name = competitor_filter.lower().replace(" ", "_") if has_comp else None
         if user_id and has_comp:
             where_filter = {"$and": [
                 {"user_id": int(user_id)},
-                {"competitor_name": competitor_filter.lower()},
+                {"competitor_name": comp_name},
             ]}
         elif user_id:
             where_filter = {"user_id": int(user_id)}
         elif has_comp:
-            where_filter = {"competitor_name": competitor_filter.lower()}
+            where_filter = {"competitor_name": comp_name}
         else:
             where_filter = None
 
