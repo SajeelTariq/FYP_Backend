@@ -19,9 +19,41 @@ from apps.social_media.models import SocialMediaPost, SocialMediaSnapshot
 WEEKDAY_LABELS = {1: 'Sunday', 2: 'Monday', 3: 'Tuesday', 4: 'Wednesday',
                   5: 'Thursday', 6: 'Friday', 7: 'Saturday'}
 
+PLATFORM_URL_FIELDS = {
+    'linkedin': 'linkedin_url',
+    'facebook': 'facebook_url',
+    'instagram': 'instagram_url',
+    'twitter': 'twitter_url',
+}
+
 
 def _user_competitor_ids(user):
     return Competitor.objects.filter(user=user, is_deleted=False).values_list('id', flat=True)
+
+
+def _competitor_ids_for_platform(user, platform):
+    """Return IDs of active competitors that currently have the given platform URL set."""
+    url_field = PLATFORM_URL_FIELDS.get(platform)
+    if not url_field:
+        return _user_competitor_ids(user)
+    return (
+        Competitor.objects
+        .filter(user=user, is_deleted=False)
+        .exclude(**{url_field: None})
+        .exclude(**{url_field: ''})
+        .values_list('id', flat=True)
+    )
+
+
+def _exclude_inactive_platforms(qs):
+    """Exclude rows for platforms whose URL has been removed from the competitor."""
+    exclude_q = Q()
+    for platform, url_field in PLATFORM_URL_FIELDS.items():
+        exclude_q |= Q(platform=platform) & (
+            Q(**{f'competitor__{url_field}__isnull': True}) |
+            Q(**{f'competitor__{url_field}': ''})
+        )
+    return qs.exclude(exclude_q)
 
 
 # ─── Section 4 ────────────────────────────────────────────────────────────────
@@ -34,7 +66,9 @@ def engagement_per_competitor(request):
     cutoff = timezone.now() - timedelta(days=days)
     comp_ids = _user_competitor_ids(request.user)
 
-    qs = SocialMediaPost.objects.filter(competitor_id__in=comp_ids, posted_at__gte=cutoff)
+    qs = _exclude_inactive_platforms(
+        SocialMediaPost.objects.filter(competitor_id__in=comp_ids, posted_at__gte=cutoff)
+    )
     competitor_id = request.query_params.get('competitor_id')
     if competitor_id:
         qs = qs.filter(competitor_id=competitor_id)
@@ -75,7 +109,9 @@ def post_volume_trend(request):
     cutoff = timezone.now() - timedelta(weeks=weeks)
     comp_ids = _user_competitor_ids(request.user)
 
-    qs = SocialMediaPost.objects.filter(competitor_id__in=comp_ids, posted_at__gte=cutoff)
+    qs = _exclude_inactive_platforms(
+        SocialMediaPost.objects.filter(competitor_id__in=comp_ids, posted_at__gte=cutoff)
+    )
     competitor_id = request.query_params.get('competitor_id')
     if competitor_id:
         qs = qs.filter(competitor_id=competitor_id)
@@ -127,7 +163,9 @@ def post_volume_trend(request):
 def post_type_distribution(request):
     """4.3 — Post Type Distribution"""
     comp_ids = _user_competitor_ids(request.user)
-    qs = SocialMediaPost.objects.filter(competitor_id__in=comp_ids)
+    qs = _exclude_inactive_platforms(
+        SocialMediaPost.objects.filter(competitor_id__in=comp_ids)
+    )
 
     competitor_id = request.query_params.get('competitor_id')
     if competitor_id:
@@ -154,8 +192,9 @@ def top_posts(request):
     comp_ids = _user_competitor_ids(request.user)
 
     qs = (
-        SocialMediaPost.objects
-        .filter(competitor_id__in=comp_ids, posted_at__gte=cutoff)
+        _exclude_inactive_platforms(
+            SocialMediaPost.objects.filter(competitor_id__in=comp_ids, posted_at__gte=cutoff)
+        )
         .annotate(total_engagement=F('num_likes') + F('num_comments') + F('num_shares'))
         .select_related('competitor')
         .order_by('-total_engagement')
@@ -194,7 +233,9 @@ def top_posts(request):
 def posting_frequency_heatmap(request):
     """4.5 — Posting Frequency Heatmap (day × hour)"""
     comp_ids = _user_competitor_ids(request.user)
-    qs = SocialMediaPost.objects.filter(competitor_id__in=comp_ids)
+    qs = _exclude_inactive_platforms(
+        SocialMediaPost.objects.filter(competitor_id__in=comp_ids)
+    )
 
     competitor_id = request.query_params.get('competitor_id')
     if competitor_id:
@@ -226,7 +267,9 @@ def author_leaderboard(request):
     """4.6 — Author Leaderboard"""
     limit = int(request.query_params.get('limit', 10))
     comp_ids = _user_competitor_ids(request.user)
-    qs = SocialMediaPost.objects.filter(competitor_id__in=comp_ids)
+    qs = _exclude_inactive_platforms(
+        SocialMediaPost.objects.filter(competitor_id__in=comp_ids)
+    )
 
     competitor_id = request.query_params.get('competitor_id')
     if competitor_id:
@@ -292,7 +335,7 @@ def follower_growth(request):
 def follower_growth_rate(request):
     """5.2 — Month-over-Month Growth %"""
     platform = request.query_params.get('platform', 'linkedin')
-    comp_ids = _user_competitor_ids(request.user)
+    comp_ids = _competitor_ids_for_platform(request.user, platform)
     cutoff = timezone.now() - timedelta(days=45)
 
     competitors = Competitor.objects.filter(id__in=comp_ids)
@@ -335,7 +378,7 @@ def platform_comparison(request):
         .order_by('-recorded_at')
         .values('id')[:1]
     )
-    snapshots = (
+    snapshots = _exclude_inactive_platforms(
         SocialMediaSnapshot.objects
         .filter(id__in=Subquery(latest), competitor_id__in=comp_ids)
         .values('competitor_id', 'competitor__name', 'platform', 'follower_count')
