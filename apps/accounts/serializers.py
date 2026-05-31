@@ -24,6 +24,7 @@ class AlertPreferenceSerializer(serializers.ModelSerializer):
             'notify_new_jobs',
             'notify_follower_change',
             'notify_new_pages',
+            'notify_news_mentions',
             'updated_at',
         ]
         read_only_fields = ['updated_at']

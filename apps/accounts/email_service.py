@@ -39,6 +39,7 @@ def send_website_change_alerts():
                 competitor__user=pref.user,
                 change_category='critical',
                 detected_at__gte=since,
+                is_onboarding_snapshot=False,
             )
             .select_related('competitor')
             .order_by('competitor__name')
@@ -73,6 +74,7 @@ def send_new_pages_alerts():
                 competitor__user=pref.user,
                 change_type='added',
                 detected_at__gte=since,
+                is_onboarding_snapshot=False,
             )
             .exclude(diff_summary__has_key='note')
             .select_related('competitor')

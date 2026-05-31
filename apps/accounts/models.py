@@ -76,6 +76,7 @@ class AlertPreference(models.Model):
     notify_new_jobs = models.BooleanField(default=True)
     notify_follower_change = models.BooleanField(default=True)
     notify_new_pages = models.BooleanField(default=True)
+    notify_news_mentions = models.BooleanField(default=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):

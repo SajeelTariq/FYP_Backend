@@ -278,6 +278,7 @@ class AlertsListView(APIView):
                     is_significant=True,
                     change_type='modified',
                     detected_at__gte=since,
+                    is_onboarding_snapshot=False,
                 )
                 .select_related('competitor')
                 .order_by('-detected_at')
@@ -304,6 +305,7 @@ class AlertsListView(APIView):
                     competitor__user=user,
                     change_type='added',
                     detected_at__gte=since,
+                    is_onboarding_snapshot=False,
                 )
                 .exclude(diff_summary__has_key='note')
                 .select_related('competitor')
@@ -349,39 +351,73 @@ class AlertsListView(APIView):
         if alert_type in ('all', 'follower_change') and pref.notify_follower_change:
             today = timezone.now().date()
             yesterday = today - timedelta(days=1)
-            for comp in user.competitors.filter(is_deleted=False, linkedin_url__isnull=False):
-                today_snap = (
-                    SocialMediaSnapshot.objects
-                    .filter(competitor=comp, recorded_at__date=today)
-                    .order_by('-recorded_at').first()
-                )
-                yesterday_snap = (
-                    SocialMediaSnapshot.objects
-                    .filter(competitor=comp, recorded_at__date=yesterday)
-                    .order_by('-recorded_at').first()
-                )
-                if not today_snap or not yesterday_snap:
-                    continue
+            platform_url_map = {
+                'linkedin': 'linkedin_url',
+                'facebook': 'facebook_url',
+                'instagram': 'instagram_url',
+            }
+            for comp in user.competitors.filter(is_deleted=False):
+                for platform, url_field in platform_url_map.items():
+                    if not getattr(comp, url_field, None):
+                        continue
+                    today_snap = (
+                        SocialMediaSnapshot.objects
+                        .filter(competitor=comp, platform=platform, recorded_at__date=today)
+                        .order_by('-recorded_at').first()
+                    )
+                    yesterday_snap = (
+                        SocialMediaSnapshot.objects
+                        .filter(competitor=comp, platform=platform, recorded_at__date=yesterday)
+                        .order_by('-recorded_at').first()
+                    )
+                    if not today_snap or not yesterday_snap:
+                        continue
 
-                f_pct = _pct(yesterday_snap.follower_count, today_snap.follower_count)
-                e_pct = _pct(yesterday_snap.employee_count, today_snap.employee_count)
+                    f_pct = _pct(yesterday_snap.follower_count, today_snap.follower_count)
+                    e_pct = _pct(yesterday_snap.employee_count, today_snap.employee_count)
 
-                if abs(f_pct) >= 5 or abs(e_pct) >= 5:
-                    alerts.append({
-                        'type': 'follower_change',
-                        'title': f'{comp.name} — LinkedIn Activity Spike',
-                        'description': f'Followers {f_pct:+}% · Employees {e_pct:+}%',
-                        'meta': {
-                            'follower_count_old': yesterday_snap.follower_count,
-                            'follower_count_new': today_snap.follower_count,
-                            'follower_pct': f_pct,
-                            'employee_count_old': yesterday_snap.employee_count,
-                            'employee_count_new': today_snap.employee_count,
-                            'employee_pct': e_pct,
-                        },
-                        'competitor': comp.name,
-                        'timestamp': today_snap.recorded_at,
-                    })
+                    if abs(f_pct) >= 5 or abs(e_pct) >= 5:
+                        alerts.append({
+                            'type': 'follower_change',
+                            'title': f'{comp.name} — {platform.capitalize()} Follower Spike',
+                            'description': f'Followers {f_pct:+}% · Employees {e_pct:+}%',
+                            'meta': {
+                                'platform': platform,
+                                'follower_count_old': yesterday_snap.follower_count,
+                                'follower_count_new': today_snap.follower_count,
+                                'follower_pct': f_pct,
+                                'employee_count_old': yesterday_snap.employee_count,
+                                'employee_count_new': today_snap.employee_count,
+                                'employee_pct': e_pct,
+                            },
+                            'competitor': comp.name,
+                            'timestamp': today_snap.recorded_at,
+                        })
+
+        if alert_type in ('all', 'news_mentions') and pref.notify_news_mentions:
+            from apps.monitoring.models import NewsArticle
+            articles = (
+                NewsArticle.objects
+                .filter(
+                    competitor__user=user,
+                    published_at__gte=since,
+                )
+                .select_related('competitor')
+                .order_by('-published_at')
+            )
+            for a in articles:
+                alerts.append({
+                    'type': 'news_mention',
+                    'title': f'{a.competitor.name} — News Mention',
+                    'description': a.title,
+                    'meta': {
+                        'url': a.url,
+                        'source': a.source,
+                        'published_at': a.published_at.isoformat() if a.published_at else None,
+                    },
+                    'competitor': a.competitor.name,
+                    'timestamp': a.published_at or a.fetched_at,
+                })
 
         alerts.sort(key=lambda x: x['timestamp'], reverse=True)
         return Response({

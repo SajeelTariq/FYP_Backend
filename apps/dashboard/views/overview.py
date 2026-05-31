@@ -11,7 +11,6 @@ from rest_framework.response import Response
 
 from apps.monitoring.models import Competitor, HTMLDifference
 from apps.social_media.models import JobPosting, SocialMediaPost
-from apps.analytics.models import TrendAnalysis
 
 
 @api_view(['GET'])
@@ -40,18 +39,12 @@ def overview(request):
         competitor_id__in=comp_ids, posted_at__gte=cutoff_30
     ).count()
 
-    high_conf_alerts = TrendAnalysis.objects.filter(
-        competitor_id__in=comp_ids, confidence_score__gte=0.8,
-        trend_direction__in=['up', 'down']
-    ).count()
-
     return Response({
         "total_competitors": total_competitors,
         "web_changes_30d": web_changes_30d,
         "significant_changes_30d": significant_changes_30d,
         "active_job_postings": active_jobs,
         "social_posts_30d": social_posts_30d,
-        "high_confidence_alerts": high_conf_alerts,
     })
 
 
