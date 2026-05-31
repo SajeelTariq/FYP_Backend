@@ -171,6 +171,7 @@ def top_posts(request):
                 "author_name": p.author_name,
                 "platform": p.platform,
                 "post_type": p.post_type,
+                "post_url": p.post_url,
                 "posted_at": p.posted_at.isoformat() if p.posted_at else None,
                 "num_likes": p.num_likes,
                 "num_comments": p.num_comments,
