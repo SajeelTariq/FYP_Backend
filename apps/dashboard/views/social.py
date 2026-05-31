@@ -147,7 +147,9 @@ def post_type_distribution(request):
 def top_posts(request):
     """4.4 — Top Performing Posts"""
     days = int(request.query_params.get('days', 30))
-    limit = int(request.query_params.get('limit', 10))
+    page_size = int(request.query_params.get('limit', 8))
+    page = max(1, int(request.query_params.get('page', 1)))
+    offset = (page - 1) * page_size
     cutoff = timezone.now() - timedelta(days=days)
     comp_ids = _user_competitor_ids(request.user)
 
@@ -162,7 +164,11 @@ def top_posts(request):
     if competitor_id:
         qs = qs.filter(competitor_id=competitor_id)
 
+    total = qs.count()
     return Response({
+        "total": total,
+        "page": page,
+        "page_size": page_size,
         "posts": [
             {
                 "id": p.pk,
@@ -178,7 +184,7 @@ def top_posts(request):
                 "num_shares": p.num_shares,
                 "total_engagement": p.total_engagement,
             }
-            for p in qs[:limit]
+            for p in qs[offset: offset + page_size]
         ]
     })
 
