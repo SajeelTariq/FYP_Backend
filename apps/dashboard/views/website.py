@@ -150,7 +150,11 @@ def change_feed(request):
     page = int(request.query_params.get('page', 1))
     offset = (page - 1) * limit
 
-    qs = HTMLDifference.objects.filter(competitor_id__in=comp_ids).select_related('competitor')
+    qs = (
+        HTMLDifference.objects
+        .filter(competitor_id__in=comp_ids, is_onboarding_snapshot=False)
+        .select_related('competitor')
+    )
 
     competitor_id = request.query_params.get('competitor_id')
     if competitor_id:

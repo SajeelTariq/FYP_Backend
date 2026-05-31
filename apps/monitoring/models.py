@@ -259,6 +259,10 @@ class HTMLDifference(models.Model):
         default=False,
         help_text="True only for critical business-impacting changes"
     )
+    is_onboarding_snapshot = models.BooleanField(
+        default=False,
+        help_text="True for initial snapshots captured during competitor onboarding — excluded from the change feed"
+    )
     llm_summary = models.TextField(
         blank=True,
         default='',

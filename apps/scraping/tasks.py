@@ -497,8 +497,8 @@ def run_initial_pipeline(competitor_id):
         # Step 1 — Scrape HTML (status already set to 'scraping' by views.py)
         _step2_scrape_html(comp, urls)
 
-        # Step 2 — Create initial snapshots (is_first_time handled gracefully)
-        _step3_detect_changes_and_summarize(comp, urls)
+        # Step 2 — Create initial snapshots (marked as onboarding, excluded from change feed)
+        _step3_detect_changes_and_summarize(comp, urls, is_onboarding=True)
 
         # Step 3 — Extract clean text + update embeddings
         comp.onboarding_status = 'indexing'
@@ -752,7 +752,7 @@ def _extract_visible_text_lines(html_content):
     return [line for line in lines if len(line) > 2]
 
 
-def _step3_detect_changes_and_summarize(competitor, urls_to_check):
+def _step3_detect_changes_and_summarize(competitor, urls_to_check, is_onboarding=False):
     """
     Step 3 – For each URL:
       a) Compute SHA-256 of current HTML (from CompetitorHTML)
@@ -760,6 +760,10 @@ def _step3_detect_changes_and_summarize(competitor, urls_to_check):
       c) If changed: create new snapshot, diff visible text (not raw HTML),
          classify as critical/non_critical/technical, call LLM for business summary,
          store HTMLDifference, increment Competitor.change_count
+
+    is_onboarding=True when called from run_initial_pipeline (first-time setup).
+    Those first-time snapshot records are marked is_onboarding_snapshot=True and
+    excluded from the website change feed so they don't create noise.
     Returns number of changes detected.
     """
     import json as _json
@@ -809,7 +813,11 @@ def _step3_detect_changes_and_summarize(competitor, urls_to_check):
                 is_significant=False,
                 change_category="technical",
                 llm_summary="Initial snapshot — no previous version to compare.",
+                is_onboarding_snapshot=is_onboarding,
             )
+            # Onboarding snapshots don't count as detected changes
+            if not is_onboarding:
+                changes_detected += 1
             continue
 
         # ── Compute raw HTML diff (stored for reference) ──
