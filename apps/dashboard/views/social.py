@@ -34,9 +34,13 @@ def engagement_per_competitor(request):
     cutoff = timezone.now() - timedelta(days=days)
     comp_ids = _user_competitor_ids(request.user)
 
+    qs = SocialMediaPost.objects.filter(competitor_id__in=comp_ids, posted_at__gte=cutoff)
+    competitor_id = request.query_params.get('competitor_id')
+    if competitor_id:
+        qs = qs.filter(competitor_id=competitor_id)
+
     data = (
-        SocialMediaPost.objects
-        .filter(competitor_id__in=comp_ids, posted_at__gte=cutoff)
+        qs
         .values('competitor_id', 'competitor__name')
         .annotate(
             total_likes=Sum('num_likes'),
@@ -66,6 +70,7 @@ def engagement_per_competitor(request):
 @permission_classes([IsAuthenticated])
 def post_volume_trend(request):
     """4.2 — Post Volume Over Time"""
+    from datetime import date
     weeks = int(request.query_params.get('weeks', 12))
     cutoff = timezone.now() - timedelta(weeks=weeks)
     comp_ids = _user_competitor_ids(request.user)
@@ -75,19 +80,46 @@ def post_volume_trend(request):
     if competitor_id:
         qs = qs.filter(competitor_id=competitor_id)
 
-    data = (
+    rows = (
         qs
         .annotate(week=TruncWeek('posted_at'))
         .values('week', 'platform')
         .annotate(count=Count('id'))
         .order_by('week', 'platform')
     )
-    return Response({
-        "series": [
-            {"week": r['week'].date().isoformat(), "platform": r['platform'], "count": r['count']}
-            for r in data
-        ]
-    })
+
+    # Build pivot: {week_str: {platform: count}}
+    pivot = {}
+    platforms = set()
+    for r in rows:
+        w = r['week'].date().isoformat()
+        p = r['platform']
+        platforms.add(p)
+        if w not in pivot:
+            pivot[w] = {}
+        pivot[w][p] = r['count']
+
+    # Generate all week slots in range (Monday-aligned), zero-fill missing
+    all_weeks = []
+    today = timezone.now().date()
+    # Start from the Monday of the cutoff week
+    start = cutoff.date()
+    start = start - timedelta(days=start.weekday())
+    current = start
+    while current <= today:
+        all_weeks.append(current.isoformat())
+        current += timedelta(weeks=1)
+
+    series = []
+    for w in all_weeks:
+        for p in sorted(platforms):
+            series.append({
+                "week": w,
+                "platform": p,
+                "count": pivot.get(w, {}).get(p, 0),
+            })
+
+    return Response({"series": series})
 
 
 @api_view(['GET'])
