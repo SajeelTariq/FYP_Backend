@@ -70,17 +70,13 @@ def rag_query(request):
         )
     
     try:
-        # Get orchestrator
         orchestrator = get_orchestrator()
-        
-        # Prepare context for agents
         context = {
             'user': request.user,
+            'user_id': request.user.id,
             'top_k': top_k,
-            'competitor_filter': competitor_filter
+            'competitor_filter': competitor_filter,
         }
-        
-        # Execute query through orchestrator
         result = orchestrator.execute(query_text, context)
         
         return Response(result, status=status.HTTP_200_OK)
@@ -121,7 +117,8 @@ def semantic_search(request):
         result = rag_service.semantic_search(
             query=query_text,
             top_k=top_k,
-            competitor_filter=competitor_filter
+            competitor_filter=competitor_filter,
+            user_id=request.user.id,
         )
         
         return Response(result, status=status.HTTP_200_OK)
@@ -142,8 +139,7 @@ def rag_stats(request):
     """
     try:
         rag_service = RAGServiceChroma()
-        stats = rag_service.get_stats()
-        
+        stats = rag_service.get_stats(user_id=request.user.id)
         return Response(stats, status=status.HTTP_200_OK)
     except Exception as e:
         return Response(
@@ -162,18 +158,13 @@ def get_competitors(request):
     """
     try:
         rag_service = RAGServiceChroma()
-        competitors = rag_service.get_competitors()
-        
-        # Add 'All' option
+        competitors = rag_service.get_competitors(user_id=request.user.id)
         all_option = {
             'name': 'All Competitors',
             'value': 'all',
-            'chunk_count': sum(c['chunk_count'] for c in competitors)
+            'chunk_count': sum(c['chunk_count'] for c in competitors),
         }
-        
-        return Response({
-            'competitors': [all_option] + competitors
-        }, status=status.HTTP_200_OK)
+        return Response({'competitors': [all_option] + competitors}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response(
             {'error': f'Error fetching competitors: {str(e)}'},
@@ -220,6 +211,8 @@ def rag_query_stream(request):
     top_k = body.get("top_k", None)
     competitor_filter = body.get("competitor_filter", "all") or "all"
 
+    stream_user_id = token.user.id
+
     def event_stream():
         start = time.time()
         rag = RAGServiceChroma()
@@ -233,11 +226,10 @@ def rag_query_stream(request):
             rag_cache_ttl = getattr(_settings, "RAG_CACHE_TTL", 7200)
             cache_key = None
             if rag_cache_ttl > 0:
-                raw_key = f"rag:{query_text.lower()}:{competitor_filter}:{top_k_val}"
+                raw_key = f"rag:{stream_user_id}:{query_text.lower()}:{competitor_filter}:{top_k_val}"
                 cache_key = "rag_" + hashlib.md5(raw_key.encode()).hexdigest()
                 cached = cache.get(cache_key)
                 if cached is not None:
-                    # Send cached answer as a single chunk for instant response
                     meta = {
                         "type": "metadata",
                         "retrieved_chunks": cached.get("retrieved_chunks", []),
@@ -250,7 +242,7 @@ def rag_query_stream(request):
                     return
 
             # --- Retrieval ---
-            search_results = rag.semantic_search(query_text, top_k_val, competitor_filter)
+            search_results = rag.semantic_search(query_text, top_k_val, competitor_filter, user_id=stream_user_id)
             retrieval_time = search_results["retrieval_time"]
             chunks = search_results["results"]
 

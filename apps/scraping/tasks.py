@@ -504,13 +504,21 @@ def run_initial_pipeline(competitor_id):
         comp.onboarding_status = 'indexing'
         comp.save(update_fields=['onboarding_status'])
 
-        _step4_extract_clean_text(comp, urls)
-        _step5_update_embeddings(comp)
+        pages_indexed = _step4_extract_clean_text(comp, urls)
+        embed_result  = _step5_update_embeddings(comp)
 
         comp.onboarding_status = 'ready'
-        comp.onboarding_error = ''
+        if embed_result.get('added', 0) == 0:
+            comp.onboarding_error = (
+                "Website content could not be indexed — pages may be blocking automated access. "
+                "The competitor is still being monitored for changes, but the AI assistant "
+                "will not have website knowledge for this competitor until re-indexing succeeds."
+            )
+            logger.warning(f"[InitialPipeline] {comp.name}: completed but 0 chunks indexed ({pages_indexed} pages processed)")
+        else:
+            comp.onboarding_error = ''
+            logger.info(f"[InitialPipeline] {comp.name}: completed — RAG ready ({embed_result['added']} chunks)")
         comp.save(update_fields=['onboarding_status', 'onboarding_error'])
-        logger.info(f"[InitialPipeline] {comp.name}: completed — RAG ready")
 
     except Competitor.DoesNotExist:
         logger.error(f"[InitialPipeline] Competitor {competitor_id} not found")
@@ -1009,7 +1017,7 @@ def _step5_update_embeddings(competitor):
         from apps.rag.rag_service_chromadb import RAGServiceChroma
 
         rag_service = RAGServiceChroma()
-        result = rag_service.ingest_competitor_from_db(competitor)
+        result = rag_service.ingest_competitor_from_db(competitor, user_id=competitor.user_id)
         logger.info(
             f"[Step5] {competitor.name}: "
             f"{result.get('added', 0)} chunks added, "

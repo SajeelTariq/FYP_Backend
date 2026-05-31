@@ -49,17 +49,16 @@ class GeneralQueryAgent:
         start_time = time.time()
         context = context or {}
         
-        # Extract parameters from context
         top_k = context.get('top_k', 5)
         competitor_filter = context.get('competitor_filter', 'all')
-        
+        user_id = context.get('user_id') or getattr(context.get('user'), 'id', None)
+
         try:
-            # Use existing RAG service directly
-            # (Agno agent would be used for more complex reasoning/multi-step tasks)
             result = self.rag_service.query(
                 query_text=query,
                 top_k=top_k,
-                competitor_filter=competitor_filter
+                competitor_filter=competitor_filter,
+                user_id=user_id,
             )
             
             # Add agent metadata

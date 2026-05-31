@@ -304,7 +304,8 @@ class RAGServiceChroma:
         self,
         query: str,
         top_k: int = 5,
-        competitor_filter: Optional[str] = None
+        competitor_filter: Optional[str] = None,
+        user_id: Optional[int] = None,
     ) -> List[Dict]:
         """
         Perform semantic search using ChromaDB dense vector retrieval.
@@ -312,7 +313,8 @@ class RAGServiceChroma:
         Args:
             query: Search query
             top_k: Number of results to return
-            competitor_filter: Filter by competitor name (honda, suzuki, kia)
+            competitor_filter: Filter by competitor name
+            user_id: Scope results to this user only
 
         Returns:
             Dict with results list and metadata
@@ -321,9 +323,18 @@ class RAGServiceChroma:
 
         query_embedding = self.generate_embedding(query)
 
-        where_filter = None
-        if competitor_filter and competitor_filter.lower() != 'all':
+        has_comp = competitor_filter and competitor_filter.lower() != 'all'
+        if user_id and has_comp:
+            where_filter = {"$and": [
+                {"user_id": int(user_id)},
+                {"competitor_name": competitor_filter.lower()},
+            ]}
+        elif user_id:
+            where_filter = {"user_id": int(user_id)}
+        elif has_comp:
             where_filter = {"competitor_name": competitor_filter.lower()}
+        else:
+            where_filter = None
 
         results = self.collection.query(
             query_embeddings=[query_embedding],
@@ -541,7 +552,8 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
         self,
         query_text: str,
         top_k: int = None,
-        competitor_filter: Optional[str] = None
+        competitor_filter: Optional[str] = None,
+        user_id: Optional[int] = None,
     ) -> Dict:
         """
         Complete RAG pipeline: retrieve + generate.
@@ -560,7 +572,7 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
         # Cache lookup (skip if TTL is 0)
         cache_key = None
         if RAG_CACHE_TTL > 0:
-            raw_key = f"rag:{query_text.strip().lower()}:{competitor_filter or 'all'}:{top_k}"
+            raw_key = f"rag:{user_id or 'anon'}:{query_text.strip().lower()}:{competitor_filter or 'all'}:{top_k}"
             cache_key = "rag_" + hashlib.md5(raw_key.encode()).hexdigest()
             cached = cache.get(cache_key)
             if cached is not None:
@@ -569,9 +581,31 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
                 return cached
 
         # Retrieval
-        search_results = self.semantic_search(query_text, top_k, competitor_filter)
+        search_results = self.semantic_search(query_text, top_k, competitor_filter, user_id=user_id)
         retrieval_time = search_results['retrieval_time']
-        
+
+        # Short-circuit: no indexed content found for this user/filter
+        if not search_results['results']:
+            comp_label = competitor_filter if (competitor_filter and competitor_filter != 'all') else 'your competitors'
+            no_data_answer = (
+                f"No website content has been indexed for {comp_label} yet. "
+                "This usually means the website couldn't be accessed during onboarding "
+                "(bot protection), or indexing is still in progress. "
+                "Try re-adding the competitor or contact support if the issue persists."
+            )
+            result = {
+                'query': query_text,
+                'answer': no_data_answer,
+                'retrieved_chunks': [],
+                'retrieval_time': retrieval_time,
+                'generation_time': 0,
+                'total_time': round(time.time() - start_time, 3),
+                'top_k': top_k,
+                'competitor_filter': competitor_filter or 'all',
+                'cache_hit': False,
+            }
+            return result
+
         # Generation
         gen_start = time.time()
         answer = self.generate_answer(query_text, search_results['results'])
@@ -603,61 +637,65 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
 
         return result
     
-    def get_stats(self) -> Dict:
-        """Get statistics about the RAG system."""
-        # Get collection stats
+    def get_stats(self, user_id: Optional[int] = None) -> Dict:
+        """Get statistics about the RAG system, scoped to a user when provided."""
         collection_count = self.collection.count()
-        
-        # Get competitor counts
         competitor_counts = {}
-        for competitor in ['honda', 'suzuki', 'kia']:
-            results = self.collection.get(
-                where={"competitor_name": competitor},
-                include=['metadatas']
-            )
-            competitor_counts[competitor] = len(results['ids']) if results['ids'] else 0
-        
+
+        if user_id:
+            from apps.monitoring.models import Competitor
+            user_comps = Competitor.objects.filter(user_id=user_id, is_deleted=False)
+            for comp in user_comps:
+                comp_name = comp.name.lower().replace(" ", "_")
+                results = self.collection.get(
+                    where={"$and": [{"user_id": int(user_id)}, {"competitor_name": comp_name}]},
+                    include=['metadatas'],
+                )
+                competitor_counts[comp_name] = len(results['ids']) if results['ids'] else 0
+        else:
+            # Fallback for management commands (no user context)
+            all_meta = self.collection.get(include=['metadatas'])
+            for meta in (all_meta.get('metadatas') or []):
+                name = meta.get('competitor_name', 'unknown')
+                competitor_counts[name] = competitor_counts.get(name, 0) + 1
+
         return {
             'total_chunks': collection_count,
             'competitor_chunks': competitor_counts,
             'embedding_dimension': 384,
             'model': 'sentence-transformers/all-MiniLM-L6-v2',
             'retrieval_method': 'dense (ChromaDB HNSW cosine)',
-            'database': 'ChromaDB'
+            'database': 'ChromaDB',
         }
-    
-    def get_competitors(self) -> List[Dict]:
-        """Get list of competitors with chunk counts."""
-        stats = self.get_stats()
-        
-        competitors = []
-        for name, count in stats['competitor_chunks'].items():
-            competitors.append({
-                'name': name.capitalize(),
-                'value': name,
-                'chunk_count': count
-            })
-        
-        return competitors
 
-    def ingest_competitor_from_db(self, competitor) -> Dict[str, int]:
+    def get_competitors(self, user_id: Optional[int] = None) -> List[Dict]:
+        """Get list of competitors with chunk counts, scoped to a user."""
+        stats = self.get_stats(user_id=user_id)
+        return [
+            {'name': name.replace('_', ' ').title(), 'value': name, 'chunk_count': count}
+            for name, count in stats['competitor_chunks'].items()
+        ]
+
+    def ingest_competitor_from_db(self, competitor, user_id: Optional[int] = None) -> Dict[str, int]:
         """
         Ingest a single competitor's data from DB (CompetitorMetadata) into ChromaDB.
-        Deletes existing chunks for this competitor first, then re-ingests.
+        Deletes only THIS user's existing chunks for this competitor, then re-ingests.
 
         Args:
             competitor: Competitor model instance
+            user_id: Owner user ID (falls back to competitor.user_id)
 
         Returns:
             Dict with 'added' and 'deleted' counts
         """
         from apps.monitoring.models import CompetitorMetadata
 
+        uid = int(user_id if user_id is not None else competitor.user_id)
         competitor_name = competitor.name.lower().replace(" ", "_")
 
-        # Delete existing chunks for this competitor
+        # Delete only THIS user's chunks for this competitor (not other users' data)
         existing = self.collection.get(
-            where={"competitor_name": competitor_name},
+            where={"$and": [{"user_id": uid}, {"competitor_name": competitor_name}]},
             include=["metadatas"],
         )
         deleted = 0
@@ -674,7 +712,7 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
         embeddings = []
         documents = []
         metadatas = []
-        existing_chunks: List[str] = []
+        seen_hashes: set = set()  # O(1) dedup using MD5 hash
 
         for meta_obj in metadata_qs:
             meta = meta_obj.metadata
@@ -687,15 +725,15 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
 
             chunks = self.chunk_text(content)
             for idx, chunk_text in enumerate(chunks):
-                if self._is_duplicate_chunk(chunk_text, existing_chunks, threshold=0.85):
+                chunk_hash = hashlib.md5(chunk_text.strip().lower().encode()).hexdigest()
+                if chunk_hash in seen_hashes:
                     continue
-                existing_chunks.append(chunk_text)
+                seen_hashes.add(chunk_hash)
 
-                chunk_id = (
-                    f"{competitor_name}_db_{meta_obj.pk}_{idx}_{int(time.time() * 1000)}"
-                )
+                chunk_id = f"u{uid}_{competitor_name}_db_{meta_obj.pk}_{idx}_{int(time.time() * 1000)}"
                 embedding = self.generate_embedding(chunk_text)
                 metadata_entry = {
+                    "user_id": uid,
                     "competitor_name": competitor_name,
                     "source_file": f"db_meta_{meta_obj.pk}",
                     "url": url,
@@ -711,7 +749,6 @@ Answer based strictly on the context above. Cite the exact Page URL (plain text)
                 metadatas.append(metadata_entry)
 
         if chunk_ids:
-            # ChromaDB add in batches to avoid oversized requests
             batch_size = 500
             for i in range(0, len(chunk_ids), batch_size):
                 self.collection.add(
