@@ -30,13 +30,21 @@ def news_feed(request):
     sorted by published_at descending.
 
     Query params:
-      ?days=6    (default 6)
-      ?page=1    (default 1, 20 articles per page)
+      ?days=6            (default 6)
+      ?page=1            (default 1, 20 articles per page)
+      ?search=keyword    (filter by title or source)
+      ?competitor_id=1   (filter by a specific competitor)
     """
-    days = int(request.query_params.get('days', 6))
-    page = max(1, int(request.query_params.get('page', 1)))
+    try:
+        days = max(1, int(request.query_params.get('days', 6)))
+        page = max(1, int(request.query_params.get('page', 1)))
+    except (ValueError, TypeError):
+        days, page = 6, 1
+
     page_size = 20
     cutoff = timezone.now() - timedelta(days=days)
+    search = request.query_params.get('search', '').strip()
+    competitor_id = request.query_params.get('competitor_id')
 
     competitor_ids = Competitor.objects.filter(
         user=request.user, is_deleted=False
@@ -59,6 +67,13 @@ def news_feed(request):
             competitor_name=F('competitor__name'),
         )
     )
+
+    if competitor_id:
+        qs = qs.filter(competitor_id=competitor_id)
+
+    if search:
+        from django.db.models import Q
+        qs = qs.filter(Q(title__icontains=search) | Q(source__icontains=search))
 
     total = qs.count()
     offset = (page - 1) * page_size
