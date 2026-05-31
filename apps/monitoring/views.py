@@ -11,6 +11,20 @@ from django.conf import settings
 from django.db.models import Q
 import logging
 
+def _trigger_social_scraping(competitor, old_linkedin=None, old_facebook=None, old_instagram=None):
+    """Fire per-competitor social scraping tasks for any URL that is newly set."""
+    from apps.social_media.tasks import (
+        scrape_linkedin_for_competitor,
+        scrape_facebook_for_competitor,
+        scrape_instagram_for_competitor,
+    )
+    if competitor.linkedin_url and competitor.linkedin_url != old_linkedin:
+        scrape_linkedin_for_competitor.delay(competitor.id)
+    if competitor.facebook_url and competitor.facebook_url != old_facebook:
+        scrape_facebook_for_competitor.delay(competitor.id)
+    if competitor.instagram_url and competitor.instagram_url != old_instagram:
+        scrape_instagram_for_competitor.delay(competitor.id)
+
 from .models import (
     Competitor, MonitoringTask, ExtractedLinks, 
     FilteredLinks, DailyScraperLinks, CompetitorHTML, CompetitorMetadata,
@@ -202,6 +216,8 @@ class CompetitorViewSet(viewsets.ModelViewSet):
                     existing_competitor.onboarding_status = 'ready'
                     existing_competitor.save(update_fields=['onboarding_status'])
 
+                _trigger_social_scraping(existing_competitor)
+
                 response_data = {
                     'message': 'Competitor restored and updated successfully',
                     'competitor': CompetitorSerializer(existing_competitor).data,
@@ -277,6 +293,9 @@ class CompetitorViewSet(viewsets.ModelViewSet):
             from apps.scraping.tasks import fetch_initial_competitor_news
             fetch_initial_competitor_news.delay(competitor.id)
 
+        # Trigger immediate social scraping for any social URL provided
+        _trigger_social_scraping(competitor)
+
         response_data = {
             'message': 'Competitor created successfully',
             'competitor': CompetitorSerializer(competitor).data,
@@ -300,6 +319,11 @@ class CompetitorViewSet(viewsets.ModelViewSet):
         
         data = serializer.validated_data
         
+        # Capture old social URLs before overwriting
+        old_linkedin = competitor.linkedin_url
+        old_facebook = competitor.facebook_url
+        old_instagram = competitor.instagram_url
+
         # Update all fields
         competitor.name = data['name']
         competitor.website_base_url = data.get('website_base_url') or None
@@ -308,7 +332,9 @@ class CompetitorViewSet(viewsets.ModelViewSet):
         competitor.instagram_url = data.get('instagram_url') or None
         competitor.twitter_url = data.get('twitter_url') or None
         competitor.save()
-        
+
+        _trigger_social_scraping(competitor, old_linkedin, old_facebook, old_instagram)
+
         return Response({
             'message': 'Competitor updated successfully',
             'competitor': CompetitorSerializer(competitor).data
@@ -327,12 +353,19 @@ class CompetitorViewSet(viewsets.ModelViewSet):
                 'error': 'No valid fields provided for update'
             }, status=status.HTTP_400_BAD_REQUEST)
         
+        # Capture old social URLs before overwriting
+        old_linkedin = competitor.linkedin_url
+        old_facebook = competitor.facebook_url
+        old_instagram = competitor.instagram_url
+
         # Update only the provided fields
         for field, value in update_data.items():
             setattr(competitor, field, value if value else None)
-        
+
         competitor.save()
-        
+
+        _trigger_social_scraping(competitor, old_linkedin, old_facebook, old_instagram)
+
         return Response({
             'message': 'Competitor updated successfully',
             'competitor': CompetitorSerializer(competitor).data
