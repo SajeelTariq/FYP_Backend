@@ -50,7 +50,8 @@ def rag_query(request):
     
     The orchestrator will automatically detect the query type and route to:
     - GeneralQueryAgent: For product/feature/price queries
-    - HTMLDiffAgent: For website change/difference queries
+    - WebsiteChangesAgent: For website change/difference queries
+    - NewsAgent: For competitor news queries
     """
     query_text = request.data.get('query')
     
